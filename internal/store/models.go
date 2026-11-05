@@ -66,12 +66,18 @@ type Trip struct {
 	ExternalID  string   `json:"external_id"`
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
+	CountryCode string   `json:"country_code"` // of the destination's coordinates (detected)
+	// CountriesManual is the person's own list of the trip's countries; empty
+	// means the detected ones are used.
+	CountriesManual []string `json:"countries_manual"`
 
 	// Derived
 	Days    int          `json:"days"`
 	Role    string       `json:"role,omitempty"` // the requesting user's role
 	Members []TripMember `json:"members,omitempty"`
 	Counts  *TripCounts  `json:"counts,omitempty"`
+	// Countries of the trip with days (lists and search fill it)
+	Countries []CountryDays `json:"countries,omitempty"`
 }
 
 // TripMember is a user with access to a trip.
@@ -127,6 +133,7 @@ type Place struct {
 	HasImage    bool     `json:"has_image"`
 	SortOrder   int      `json:"sort_order"`
 	ExternalID  string   `json:"external_id"`
+	CountryCode string   `json:"country_code"`
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 
@@ -155,6 +162,7 @@ type Lodging struct {
 	ImagePath         string   `json:"-"`
 	HasImage          bool     `json:"has_image"`
 	ExternalID        string   `json:"external_id"`
+	CountryCode       string   `json:"country_code"`
 	CreatedAt         string   `json:"created_at"`
 	UpdatedAt         string   `json:"updated_at"`
 }
@@ -210,7 +218,25 @@ type Expense struct {
 	Notes      string  `json:"notes"`
 	CreatedAt  string  `json:"created_at"`
 	UpdatedAt  string  `json:"updated_at"`
+
+	// A spent cost is a bill (Cospend): who paid, for whom (trip people ids),
+	// how; in the trash when deleted; updated_ts for Cospend sync.
+	PayerID         *int64  `json:"payer_id"`
+	Owers           []int64 `json:"owers"`
+	PaymentModeID   int64   `json:"payment_mode_id"`
+	BillTime        string  `json:"bill_time"` // HH:MM, "" = no time
+	Deleted         bool    `json:"deleted"`
+	UpdatedTS       int64   `json:"updated_ts"`
+	Repeat          string  `json:"repeat"` // n | d | w | b | s | m | y
+	RepeatAllActive bool    `json:"repeat_all_active"`
+	RepeatUntil     string  `json:"repeat_until"`
+	RepeatFreq      int     `json:"repeat_freq"`
+	// ParentID: this bill is the extra part of another (uneven split)
+	ParentID *int64 `json:"parent_id"`
 }
+
+// IsBill reports whether an expense is a bill (spent, not just planned).
+func (e *Expense) IsBill() bool { return e.Kind == "actual" }
 
 // Checklist groups items (packing, to-do before leaving, shopping…).
 type Checklist struct {
@@ -310,10 +336,15 @@ type Settings struct {
 	// Pocket Movement while Travel is connected to Core and the link is on,
 	// else Dawarich.
 	LocationSource string `json:"location_source"`
-	OpenAIKey      string `json:"openai_api_key"`
-	OpenAIModel    string `json:"openai_model"`
-	OpenAIBaseURL  string `json:"openai_base_url"` // any OpenAI-compatible endpoint
-	MapTiles       string `json:"map_tiles"`       // osm | carto | topo
-	AutoPhotos     bool   `json:"auto_photos"`     // look up Wikipedia/Commons pictures for new places
-	SetupComplete  bool   `json:"setup_complete"`
+	// Pocket Places on the trip page (through Pocket Core only): core | off;
+	// "" = core.
+	PlacesMode    string `json:"places_mode"`
+	OpenAIKey     string `json:"openai_api_key"`
+	OpenAIModel   string `json:"openai_model"`
+	OpenAIBaseURL string `json:"openai_base_url"` // any OpenAI-compatible endpoint
+	MapTiles      string `json:"map_tiles"`       // osm | carto | topo
+	AutoPhotos    bool   `json:"auto_photos"`     // look up Wikipedia/Commons pictures for new places
+	CheckInTime   string `json:"checkin_time"`    // HH:MM a new stay starts with (15:00)
+	CheckOutTime  string `json:"checkout_time"`   // HH:MM a new stay ends with (11:00)
+	SetupComplete bool   `json:"setup_complete"`
 }

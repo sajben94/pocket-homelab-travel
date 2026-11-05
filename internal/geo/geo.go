@@ -48,20 +48,21 @@ func (c *Client) getJSON(ctx context.Context, u string, v any) error {
 
 // Result is a geocoded place.
 type Result struct {
-	Name     string  `json:"name"`
-	Display  string  `json:"display"`
-	Lat      float64 `json:"lat"`
-	Lng      float64 `json:"lng"`
-	Type     string  `json:"type"`
-	Category string  `json:"category"`
-	Country  string  `json:"country"`
-	City     string  `json:"city"`
-	Website  string  `json:"website,omitempty"`
-	Phone    string  `json:"phone,omitempty"`
-	Hours    string  `json:"hours,omitempty"`
-	Source   string  `json:"source"`
-	OSMID    string  `json:"osm_id,omitempty"`
-	Suggest  string  `json:"suggest,omitempty"` // our place category guessed from the OSM tags
+	Name        string  `json:"name"`
+	Display     string  `json:"display"`
+	Lat         float64 `json:"lat"`
+	Lng         float64 `json:"lng"`
+	Type        string  `json:"type"`
+	Category    string  `json:"category"`
+	Country     string  `json:"country"`
+	CountryCode string  `json:"country_code"` // ISO 3166-1 alpha-2, upper case
+	City        string  `json:"city"`
+	Website     string  `json:"website,omitempty"`
+	Phone       string  `json:"phone,omitempty"`
+	Hours       string  `json:"hours,omitempty"`
+	Source      string  `json:"source"`
+	OSMID       string  `json:"osm_id,omitempty"`
+	Suggest     string  `json:"suggest,omitempty"` // our place category guessed from the OSM tags
 }
 
 // Search runs a free-text Nominatim search.
@@ -83,6 +84,7 @@ func (c *Client) Search(ctx context.Context, q string, limit int) ([]Result, err
 		OSMType     string `json:"osm_type"`
 		OSMID       int64  `json:"osm_id"`
 		Address     struct {
+			CountryCode string `json:"country_code"`
 			Country     string `json:"country"`
 			City        string `json:"city"`
 			Town        string `json:"town"`
@@ -108,7 +110,7 @@ func (c *Client) Search(ctx context.Context, q string, limit int) ([]Result, err
 		if city == "" {
 			city = r.Address.Village
 		}
-		out = append(out, Result{Name: name, Display: r.DisplayName, Lat: lat, Lng: lng, Type: r.Type, Category: r.Class, Suggest: SuggestCategory(r.Class, r.Type), Country: r.Address.Country, City: city, Source: "nominatim", OSMID: fmt.Sprintf("%s/%d", r.OSMType, r.OSMID)})
+		out = append(out, Result{Name: name, Display: r.DisplayName, Lat: lat, Lng: lng, Type: r.Type, Category: r.Class, Suggest: SuggestCategory(r.Class, r.Type), Country: r.Address.Country, CountryCode: strings.ToUpper(r.Address.CountryCode), City: city, Source: "nominatim", OSMID: fmt.Sprintf("%s/%d", r.OSMType, r.OSMID)})
 	}
 	return out, nil
 }
@@ -121,6 +123,7 @@ func (c *Client) Reverse(ctx context.Context, lat, lng float64) (*Result, error)
 		Type        string `json:"type"`
 		Class       string `json:"category"`
 		Address     struct {
+			CountryCode string `json:"country_code"`
 			Country     string `json:"country"`
 			City        string `json:"city"`
 			Town        string `json:"town"`
@@ -140,7 +143,7 @@ func (c *Client) Reverse(ctx context.Context, lat, lng float64) (*Result, error)
 	if city == "" {
 		city = raw.Address.Village
 	}
-	return &Result{Name: prettyName(raw.Name, raw.Address.Road, raw.Address.HouseNumber, raw.DisplayName), Display: raw.DisplayName, Lat: lat, Lng: lng, Type: raw.Type, Category: raw.Class, Suggest: SuggestCategory(raw.Class, raw.Type), Country: raw.Address.Country, City: city, Source: "nominatim"}, nil
+	return &Result{Name: prettyName(raw.Name, raw.Address.Road, raw.Address.HouseNumber, raw.DisplayName), Display: raw.DisplayName, Lat: lat, Lng: lng, Type: raw.Type, Category: raw.Class, Suggest: SuggestCategory(raw.Class, raw.Type), Country: raw.Address.Country, CountryCode: strings.ToUpper(raw.Address.CountryCode), City: city, Source: "nominatim"}, nil
 }
 
 // Discover categories map to Overpass tag filters.

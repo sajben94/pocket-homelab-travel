@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 IMAGE   ?= ghcr.io/abjelosevic88/pocket-homelab-travel
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 
-.PHONY: all web build run dev test lint docker docker-multiarch backup clean help
+.PHONY: all web build run dev dev-mine test lint docker docker-multiarch backup clean help
 
 all: web build
 
@@ -13,11 +13,15 @@ build:                     ## build the Go binary (embeds web/dist)
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o pocket-travel ./cmd/pocket-travel
 
 run: build                 ## run locally with demo data and no login
-	DATA_DIR=./data DEMO_DATA=true AUTH_MODE=none LOG_LEVEL=debug ./pocket-travel
+	DATA_DIR=./data-demo DEMO_DATA=true AUTH_MODE=none LOG_LEVEL=debug ./pocket-travel
 
-dev:                       ## backend on :8080 + vite dev server on :5173 with hot reload
+dev:                       ## demo data, no login: backend on :8080 + vite dev server on :5173 with hot reload
 	@echo "Starting API on :8080 and Vite on :5173 (open http://localhost:5173)"
-	@(DATA_DIR=./data DEMO_DATA=true AUTH_MODE=none LOG_LEVEL=debug go run ./cmd/pocket-travel &) && cd web && npm run dev
+	@(DATA_DIR=./data-demo DEMO_DATA=true AUTH_MODE=none LOG_LEVEL=debug go run ./cmd/pocket-travel &) && cd web && npm run dev
+
+dev-mine:                  ## your own database in ./data, with login: backend on :8080 + vite on :5173
+	@echo "Starting API on :8080 (./data) and Vite on :5173 (open http://localhost:5173)"
+	@(DATA_DIR=./data AUTH_MODE=local LOG_LEVEL=info go run ./cmd/pocket-travel &) && cd web && npm run dev
 
 test:                      ## run Go tests and type-check the UI
 	go vet ./... && go test ./...

@@ -21,7 +21,7 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 	if home == "" {
 		home = "EUR"
 	}
-	st := Settings{Title: DefaultTitle, HomeCurrency: home, DateFormat: "auto", TimeFormat: "auto", DistanceUnit: "km", FXAuto: true, MapTiles: "osm", AutoPhotos: true}
+	st := Settings{Title: DefaultTitle, HomeCurrency: home, DateFormat: "auto", TimeFormat: "auto", DistanceUnit: "km", FXAuto: true, MapTiles: "osm", AutoPhotos: true, CheckInTime: "15:00", CheckOutTime: "11:00"}
 	kv := map[string]string{}
 	rows, err := s.DB.QueryContext(ctx, `SELECT key, value FROM settings`)
 	if err != nil {
@@ -101,6 +101,8 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.ImmichPublicURL = v
 		case "location_source":
 			st.LocationSource = v
+		case "places_mode":
+			st.PlacesMode = v
 		case "ai_pocket_model":
 			st.AIPocketModel = v
 		case "ai_provider":
@@ -116,6 +118,14 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 		case "map_tiles":
 			if v != "" {
 				st.MapTiles = v
+			}
+		case "checkin_time":
+			if v != "" {
+				st.CheckInTime = v
+			}
+		case "checkout_time":
+			if v != "" {
+				st.CheckOutTime = v
 			}
 		case "setup_complete":
 			st.SetupComplete = v == "1"
@@ -142,11 +152,14 @@ func personalKV(st Settings) map[string]string {
 		"immich_api_key":    st.ImmichAPIKey,
 		"immich_public_url": st.ImmichPublicURL,
 		"location_source":   st.LocationSource,
+		"places_mode":       st.PlacesMode,
 		"ai_provider":       st.AIProvider, "ai_pocket_model": st.AIPocketModel,
 		"openai_api_key":  st.OpenAIKey,
 		"openai_model":    st.OpenAIModel,
 		"openai_base_url": st.OpenAIBaseURL,
 		"map_tiles":       st.MapTiles,
+		"checkin_time":    st.CheckInTime,
+		"checkout_time":   st.CheckOutTime,
 		"auto_photos":     b[st.AutoPhotos],
 	}
 }

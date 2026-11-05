@@ -346,7 +346,13 @@ func applyLodging(l *store.Lodging, in lodgingInput, keys map[string]bool) strin
 	if l.Type == "" {
 		l.Type = "hotel"
 	}
-	if len(l.CheckIn) >= 10 && len(l.CheckOut) >= 10 && l.CheckOut[:10] < l.CheckIn[:10] {
+	// check-in / check-out: a day (YYYY-MM-DD) or a day and a time (YYYY-MM-DDTHH:MM)
+	for _, v := range []string{l.CheckIn, l.CheckOut} {
+		if !validStayTime(v) {
+			return "check-in and check-out are YYYY-MM-DD or YYYY-MM-DDTHH:MM"
+		}
+	}
+	if l.CheckIn != "" && l.CheckOut != "" && l.CheckOut < l.CheckIn {
 		return "check-out is before check-in"
 	}
 	if l.Currency != "" && !currency.Valid(l.Currency) {
@@ -650,4 +656,33 @@ func (s *Server) attachPhotos(ctx context.Context, tripID int64, places []store.
 		}
 		places[i].HasImage = len(places[i].Photos) > 0
 	}
+}
+
+// validClock accepts HH:MM (24 h).
+func validClock(v string) bool {
+	if len(v) != 5 || v[2] != ':' {
+		return false
+	}
+	h, m := (int(v[0])-'0')*10+int(v[1]-'0'), (int(v[3])-'0')*10+int(v[4]-'0')
+	for _, c := range []byte{v[0], v[1], v[3], v[4]} {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return h < 24 && m < 60
+}
+
+// validStayTime accepts "", YYYY-MM-DD and YYYY-MM-DDTHH:MM (seconds and an
+// RFC 3339 zone from imports are tolerated).
+func validStayTime(v string) bool {
+	if v == "" {
+		return true
+	}
+	if len(v) < 10 || !validDate(v[:10]) {
+		return false
+	}
+	if len(v) == 10 {
+		return true
+	}
+	return v[10] == 'T' && len(v) >= 16 && validClock(v[11:16])
 }

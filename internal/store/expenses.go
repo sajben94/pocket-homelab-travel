@@ -2,50 +2,149 @@ package store
 
 import (
 	"context"
-	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
+	"database/sql"
 	"strings"
+	"time"
+
+	core "github.com/abjelosevic88/pocket-homelab-core/sdk"
 )
 
-const expenseCols = `id, trip_id, name, category, amount, currency, amount_home, fx_rate, date, kind, source, external_id, link_kind, link_id, notes, created_at, updated_at`
+const expenseCols = `id, trip_id, name, category, amount, currency, amount_home, fx_rate, date, kind, source, external_id, link_kind, link_id, notes, created_at, updated_at, payer_id, payment_mode_id, bill_time, deleted, updated_ts, repeat, repeat_all_active, repeat_until, repeat_freq, parent_id`
 
 func scanExpense(row interface{ Scan(...any) error }) (*Expense, error) {
 	var e Expense
-	if err := row.Scan(&e.ID, &e.TripID, &e.Name, &e.Category, &e.Amount, &e.Currency, &e.AmountHome, &e.FXRate, &e.Date, &e.Kind, &e.Source, &e.ExternalID, &e.LinkKind, &e.LinkID, &e.Notes, &e.CreatedAt, &e.UpdatedAt); err != nil {
+	var payer, parent sql.NullInt64
+	var del, all int
+	if err := row.Scan(&e.ID, &e.TripID, &e.Name, &e.Category, &e.Amount, &e.Currency, &e.AmountHome, &e.FXRate, &e.Date, &e.Kind, &e.Source, &e.ExternalID, &e.LinkKind, &e.LinkID, &e.Notes, &e.CreatedAt, &e.UpdatedAt,
+		&payer, &e.PaymentModeID, &e.BillTime, &del, &e.UpdatedTS, &e.Repeat, &all, &e.RepeatUntil, &e.RepeatFreq, &parent); err != nil {
 		return nil, notFound(err)
 	}
+	if payer.Valid {
+		e.PayerID = &payer.Int64
+	}
+	if parent.Valid {
+		e.ParentID = &parent.Int64
+	}
+	e.Deleted, e.RepeatAllActive = del == 1, all == 1
+	e.Owers = []int64{}
 	return &e, nil
 }
 
-// ListExpenses returns a trip's expenses, newest date first.
+// ExpenseFilter narrows ListExpensesWith.
+type ExpenseFilter struct {
+	Deleted     *bool // nil = not in the trash; true = only the trash
+	BillsOnly   bool  // spent costs only (Cospend bills)
+	ChangedFrom int64 // updated_ts >= this (Cospend "lastchanged")
+}
+
+// ListExpenses returns a trip's expenses outside the trash, newest date first.
 func (s *Store) ListExpenses(ctx context.Context, tripID int64) ([]Expense, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+expenseCols+` FROM expenses WHERE trip_id = ? ORDER BY date DESC, id DESC`, tripID)
+	return s.ListExpensesWith(ctx, tripID, ExpenseFilter{})
+}
+
+// ListExpensesWith returns a trip's expenses with their owers.
+func (s *Store) ListExpensesWith(ctx context.Context, tripID int64, f ExpenseFilter) ([]Expense, error) {
+	q := `SELECT ` + expenseCols + ` FROM expenses WHERE trip_id = ?`
+	args := []any{tripID}
+	if f.Deleted != nil && *f.Deleted {
+		q += ` AND deleted = 1`
+	} else if f.Deleted == nil {
+		q += ` AND deleted = 0`
+	}
+	if f.BillsOnly {
+		q += ` AND kind = 'actual'`
+	}
+	if f.ChangedFrom > 0 {
+		q += ` AND updated_ts >= ?`
+		args = append(args, f.ChangedFrom)
+	}
+	q += ` ORDER BY date DESC, bill_time DESC, id DESC`
+	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []Expense{}
 	for rows.Next() {
 		e, err := scanExpense(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, *e)
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	owers, err := s.tripOwers(ctx, tripID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if o := owers[out[i].ID]; o != nil {
+			out[i].Owers = o
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) tripOwers(ctx context.Context, tripID int64) (map[int64][]int64, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT o.expense_id, o.member_id FROM expense_owers o JOIN expenses e ON e.id = o.expense_id WHERE e.trip_id = ? ORDER BY o.member_id`, tripID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var e, m int64
+		if err := rows.Scan(&e, &m); err != nil {
+			return nil, err
+		}
+		out[e] = append(out[e], m)
+	}
 	return out, rows.Err()
 }
 
-// GetExpense loads one expense.
-func (s *Store) GetExpense(ctx context.Context, tripID, id int64) (*Expense, error) {
-	return scanExpense(s.DB.QueryRowContext(ctx, `SELECT `+expenseCols+` FROM expenses WHERE id = ? AND trip_id = ?`, id, tripID))
+// BillIDs returns the ids of a trip's bills outside the trash (Cospend "allBillIds").
+func (s *Store) BillIDs(ctx context.Context, tripID int64) ([]int64, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM expenses WHERE trip_id = ? AND kind = 'actual' AND deleted = 0 ORDER BY id`, tripID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
-// CreateExpense inserts an expense.
-func (s *Store) CreateExpense(ctx context.Context, e *Expense, after ...core.CommitHook) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
+// GetExpense loads one expense (also from the trash) with its owers.
+func (s *Store) GetExpense(ctx context.Context, tripID, id int64) (*Expense, error) {
+	e, err := scanExpense(s.DB.QueryRowContext(ctx, `SELECT `+expenseCols+` FROM expenses WHERE id = ? AND trip_id = ?`, id, tripID))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer tx.Rollback()
+	rows, err := s.DB.QueryContext(ctx, `SELECT member_id FROM expense_owers WHERE expense_id = ? ORDER BY member_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m int64
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		e.Owers = append(e.Owers, m)
+	}
+	return e, rows.Err()
+}
+
+func defaults(e *Expense) {
 	if e.Kind == "" {
 		e.Kind = "planned"
 	}
@@ -58,20 +157,156 @@ func (s *Store) CreateExpense(ctx context.Context, e *Expense, after ...core.Com
 	if e.FXRate == 0 {
 		e.FXRate = 1
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO expenses (trip_id, name, category, amount, currency, amount_home, fx_rate, date, kind, source, external_id, link_kind, link_id, notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.TripID, e.Name, e.Category, e.Amount, e.Currency, e.AmountHome, e.FXRate, e.Date, e.Kind, e.Source, e.ExternalID, e.LinkKind, e.LinkID, e.Notes)
+	if e.Repeat == "" {
+		e.Repeat = "n"
+	}
+	if e.RepeatFreq <= 0 {
+		e.RepeatFreq = 1
+	}
+	e.UpdatedTS = time.Now().Unix()
+}
+
+func writeOwers(ctx context.Context, tx *sql.Tx, id int64, owers []int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM expense_owers WHERE expense_id = ?`, id); err != nil {
+		return err
+	}
+	for _, m := range owers {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO expense_owers (expense_id, member_id) VALUES (?, ?)`, id, m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CreateExpense inserts an expense (and, for a bill, who it is for).
+func (s *Store) CreateExpense(ctx context.Context, e *Expense, after ...core.CommitHook) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	defaults(e)
+	res, err := tx.ExecContext(ctx, `INSERT INTO expenses (trip_id, name, category, amount, currency, amount_home, fx_rate, date, kind, source, external_id, link_kind, link_id, notes,
+		payer_id, payment_mode_id, bill_time, deleted, updated_ts, repeat, repeat_all_active, repeat_until, repeat_freq, parent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.TripID, e.Name, e.Category, e.Amount, e.Currency, e.AmountHome, e.FXRate, e.Date, e.Kind, e.Source, e.ExternalID, e.LinkKind, e.LinkID, e.Notes,
+		e.PayerID, e.PaymentModeID, e.BillTime, boolInt(e.Deleted), e.UpdatedTS, e.Repeat, boolInt(e.RepeatAllActive), e.RepeatUntil, e.RepeatFreq, e.ParentID)
 	if err != nil {
 		return conflict(err)
 	}
 	e.ID, _ = res.LastInsertId()
+	if e.Owers == nil {
+		e.Owers = []int64{}
+	}
+	if err := writeOwers(ctx, tx, e.ID, e.Owers); err != nil {
+		return err
+	}
 	return core.Commit(tx, after...)
 }
 
-// UpdateExpense saves an expense.
+// UpdateExpense saves an expense; owers are rewritten when e.Owers is not nil.
 func (s *Store) UpdateExpense(ctx context.Context, e *Expense) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE expenses SET name = ?, category = ?, amount = ?, currency = ?, amount_home = ?, fx_rate = ?, date = ?, kind = ?, link_kind = ?, link_id = ?, notes = ?, updated_at = ? WHERE id = ? AND trip_id = ?`,
-		e.Name, e.Category, e.Amount, e.Currency, e.AmountHome, e.FXRate, e.Date, e.Kind, e.LinkKind, e.LinkID, e.Notes, Now(), e.ID, e.TripID)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	defaults(e)
+	if _, err := tx.ExecContext(ctx, `UPDATE expenses SET name = ?, category = ?, amount = ?, currency = ?, amount_home = ?, fx_rate = ?, date = ?, kind = ?, link_kind = ?, link_id = ?, notes = ?, updated_at = ?,
+		payer_id = ?, payment_mode_id = ?, bill_time = ?, deleted = ?, updated_ts = ?, repeat = ?, repeat_all_active = ?, repeat_until = ?, repeat_freq = ? WHERE id = ? AND trip_id = ?`,
+		e.Name, e.Category, e.Amount, e.Currency, e.AmountHome, e.FXRate, e.Date, e.Kind, e.LinkKind, e.LinkID, e.Notes, Now(),
+		e.PayerID, e.PaymentModeID, e.BillTime, boolInt(e.Deleted), e.UpdatedTS, e.Repeat, boolInt(e.RepeatAllActive), e.RepeatUntil, e.RepeatFreq, e.ID, e.TripID); err != nil {
+		return err
+	}
+	if e.Owers != nil {
+		if err := writeOwers(ctx, tx, e.ID, e.Owers); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// TrashExpense moves a bill to the trash (or back out of it).
+func (s *Store) TrashExpense(ctx context.Context, tripID, id int64, deleted bool) error {
+	// the extra parts of an uneven split go (and come back) with their bill
+	res, err := s.DB.ExecContext(ctx, `UPDATE expenses SET deleted = ?, updated_ts = ?, updated_at = ? WHERE (id = ? OR parent_id = ?) AND trip_id = ?`, boolInt(deleted), time.Now().Unix(), Now(), id, id, tripID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EmptyTrash deletes the bills in a trip's trash for good.
+func (s *Store) EmptyTrash(ctx context.Context, tripID int64) (int64, error) {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM expenses WHERE trip_id = ? AND deleted = 1`, tripID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// MemberBills counts the bills (trash included) someone on a trip paid or owes.
+func (s *Store) MemberBills(ctx context.Context, tripID, memberID int64) (int, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM expenses e WHERE e.trip_id = ? AND (e.payer_id = ? OR EXISTS (SELECT 1 FROM expense_owers o WHERE o.expense_id = e.id AND o.member_id = ?))`, tripID, memberID, memberID).Scan(&n)
+	return n, err
+}
+
+// RepeatingBills returns every bill outside the trash that repeats.
+func (s *Store) RepeatingBills(ctx context.Context) ([]Expense, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+expenseCols+` FROM expenses WHERE kind = 'actual' AND deleted = 0 AND repeat <> 'n' AND repeat <> '' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	var out []Expense
+	for rows.Next() {
+		e, err := scanExpense(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, *e)
+	}
+	rows.Close()
+	for i := range out {
+		if full, err := s.GetExpense(ctx, out[i].TripID, out[i].ID); err == nil {
+			out[i].Owers = full.Owers
+		}
+	}
+	return out, rows.Err()
+}
+
+// BillParts returns the extra parts of an unevenly split bill.
+func (s *Store) BillParts(ctx context.Context, tripID, parentID int64) ([]Expense, error) {
+	all, err := s.ListExpensesWith(ctx, tripID, ExpenseFilter{Deleted: new(bool)})
+	if err != nil {
+		return nil, err
+	}
+	var out []Expense
+	for _, e := range all {
+		if e.ParentID != nil && *e.ParentID == parentID {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// MoveMemberBills moves every bill of one trip member to another (merging people).
+func MoveMemberBills(ctx context.Context, tx *sql.Tx, tripID, from, into int64) error {
+	now := time.Now().Unix()
+	if _, err := tx.ExecContext(ctx, `UPDATE expenses SET payer_id = ?, updated_ts = ? WHERE trip_id = ? AND payer_id = ?`, into, now, tripID, from); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE expenses SET updated_ts = ? WHERE trip_id = ? AND id IN (SELECT expense_id FROM expense_owers WHERE member_id = ?)`, now, tripID, from); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO expense_owers (expense_id, member_id) SELECT expense_id, ? FROM expense_owers WHERE member_id = ?`, into, from); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM expense_owers WHERE member_id = ?`, from)
 	return err
 }
 
@@ -121,8 +356,10 @@ func (s *Store) UpsertExternalExpense(ctx context.Context, e *Expense, after ...
 	err := s.DB.QueryRowContext(ctx, `SELECT id FROM expenses WHERE trip_id = ? AND source = ? AND external_id = ?`, e.TripID, e.Source, e.ExternalID).Scan(&id)
 	if err == nil {
 		e.ID = id
-		_, err = s.DB.ExecContext(ctx, `UPDATE expenses SET name = ?, category = ?, amount = ?, currency = ?, amount_home = ?, fx_rate = ?, date = ?, kind = ?, notes = ?, updated_at = ? WHERE id = ?`,
-			e.Name, e.Category, e.Amount, e.Currency, e.AmountHome, e.FXRate, e.Date, e.Kind, e.Notes, Now(), id)
+		_, err = s.DB.ExecContext(ctx, `UPDATE expenses SET name = ?, category = ?, amount = ?, currency = ?, amount_home = ?, fx_rate = ?, date = ?, kind = ?, notes = ?, updated_at = ?,
+			updated_ts = CASE WHEN name = ? AND amount = ? AND currency = ? AND date = ? AND kind = ? AND notes = ? THEN updated_ts ELSE ? END WHERE id = ?`,
+			e.Name, e.Category, e.Amount, e.Currency, e.AmountHome, e.FXRate, e.Date, e.Kind, e.Notes, Now(),
+			e.Name, e.Amount, e.Currency, e.Date, e.Kind, e.Notes, time.Now().Unix(), id)
 		return false, err
 	}
 	return true, s.CreateExpense(ctx, e, after...)

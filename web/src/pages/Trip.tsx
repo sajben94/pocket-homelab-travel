@@ -7,6 +7,7 @@ import { daysBetween, fmtRange, plural, todayISO } from '../lib/format'
 import { Loading, Tabs, useToast } from '../components/ui'
 import { Icon } from '../components/icons'
 import { TRIP_TABS } from '../components/CommandPalette'
+import { countryName, flag } from '../lib/countries'
 import { useApp } from '../lib/app-context'
 import { TripCtx, type EditKind } from './trip/ctx'
 import { OverviewTab } from './trip/Overview'
@@ -15,6 +16,7 @@ import { Places, PlaceModal } from './trip/Places'
 import { MapTab } from './trip/MapTab'
 import { Stay, LodgingModal, TransportModal } from './trip/Stay'
 import { BudgetTab, ExpenseModal } from './trip/Budget'
+import { Split } from './trip/Split'
 import { Checklists } from './trip/Lists'
 import { Journal, JournalModal } from './trip/Journal'
 import { Photos } from './trip/Photos'
@@ -25,7 +27,8 @@ const TABS = TRIP_TABS.map(([id, label, icon]) => ({ id, label, icon }))
 const ADD_KINDS: EditKind[] = ['place', 'lodging', 'transport', 'expense', 'journal']
 
 export default function TripPage() {
-  const { id, tab = 'overview' } = useParams()
+  const { id, tab: rawTab = 'overview' } = useParams()
+  const tab = rawTab === 'split' ? 'spending' : rawTab // the tab used to be called Split
   const navigate = useNavigate()
   const { toast } = useToast()
   const { reloadTrips } = useApp()
@@ -83,6 +86,16 @@ export default function TripPage() {
     setEditing({ kind: addKind, item: null, defaults })
   }, [addKind, ov, id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ?open=place:12 | lodging:3 | transport:4 (search results, links) opens that item's form
+  const openParam = params.get('open')
+  useEffect(() => {
+    if (!openParam || !ov || String(ov.trip.id) !== id) return
+    const next = new URLSearchParams(params); next.delete('open'); setParams(next, { replace: true })
+    const [kind, raw] = openParam.split(':'), oid = Number(raw)
+    const item = kind === 'place' ? ov.places.find(p => p.id === oid) : kind === 'lodging' ? ov.lodging.find(l => l.id === oid) : kind === 'transport' ? ov.transport.find(x => x.id === oid) : kind === 'expense' ? ov.expenses.find(x => x.id === oid) : undefined
+    if (item) setEditing({ kind: kind as EditKind, item })
+  }, [openParam, ov, id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   if (err) return <div className="callout danger"><Icon name="alert" size={15} /><span>{err} — <Link to="/trips">back to trips</Link></span></div>
   if (!state || !ov) return <Loading />
   const t = ov.trip
@@ -99,7 +112,7 @@ export default function TripPage() {
           <div>
             <div className="row" style={{ gap: 8, marginBottom: 6 }}><span className="status-pill">{running ? `Day ${daysBetween(t.start_date, today) + 1} of ${t.days}` : until ? `In ${until} days` : STATUS_LABEL[t.status]}</span>{t.archived && <span className="status-pill"><Icon name="archive" size={12} />Archived</span>}</div>
             <h1>{t.name}</h1>
-            <div className="meta-line"><span><Icon name="pin" size={14} />{t.destination || 'No destination yet'}</span><span><Icon name="calendar" size={14} />{fmtRange(t.start_date, t.end_date)}</span>{t.days > 0 && <span>{plural(t.days, 'day')}</span>}{t.members && t.members.length > 1 && <span><Icon name="users" size={14} />{t.members.map(m => m.name.split(' ')[0]).join(', ')}</span>}</div>
+            <div className="meta-line"><span><Icon name="pin" size={14} />{t.destination || 'No destination yet'}</span><span><Icon name="calendar" size={14} />{fmtRange(t.start_date, t.end_date)}</span>{t.days > 0 && <span>{plural(t.days, 'day')}</span>}{ov.countries.some(c => c.days > 0) && <span className="hero-countries" title={ov.countries.map(c => `${countryName(c.code)}: ${plural(c.days, 'day')}`).join('\n')}>{ov.countries.filter(c => c.days > 0).map(c => <Link key={c.code} to={`/countries/${c.code}`}>{flag(c.code)}{ov.countries.length > 1 && <small> {c.days}d</small>}</Link>)}</span>}{ov.people.length > 1 && <span className="hero-people"><Icon name="users" size={14} />{ov.people.map((p, i) => <span key={p.id}>{i > 0 && ', '}{p.person_id ? <Link to={`/people/${p.person_id}`}>{p.name.split(' ')[0]}</Link> : p.name.split(' ')[0]}</span>)}</span>}</div>
           </div>
           <div className="row">
             {state.canEdit && <button type="button" className="btn glass" onClick={() => edit('place', null, {})}><Icon name="pin" size={15} />Place</button>}
@@ -116,6 +129,7 @@ export default function TripPage() {
         {tab === 'map' && <MapTab />}
         {tab === 'stay' && <Stay />}
         {tab === 'budget' && <BudgetTab />}
+        {tab === 'spending' && <Split />}
         {tab === 'lists' && <Checklists />}
         {tab === 'journal' && <Journal />}
         {tab === 'photos' && <Photos />}
@@ -127,7 +141,7 @@ export default function TripPage() {
       {editing?.kind === 'transport' && <TransportModal trip={t} item={editing.item as Transport | null} defaults={editing.defaults} onClose={close} onSaved={afterSave} />}
       {editing?.kind === 'expense' && <ExpenseModal trip={t} item={editing.item as Expense | null} defaults={editing.defaults} onClose={close} onSaved={afterSave} />}
       {editing?.kind === 'journal' && <JournalModal trip={t} item={editing.item as JournalEntry | null} defaults={editing.defaults} onClose={close} onSaved={afterSave} />}
-      {editing?.kind === 'trip' && <TripModal trip={editing.item as Trip} onClose={close} onSaved={afterSave} />}
+      {editing?.kind === 'trip' && <TripModal trip={editing.item as Trip} detected={ov.countries} onClose={close} onSaved={afterSave} />}
     </TripCtx.Provider>
   )
 }

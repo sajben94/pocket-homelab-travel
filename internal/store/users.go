@@ -22,7 +22,8 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 		return conflict(err)
 	}
 	u.ID, _ = res.LastInsertId()
-	return nil
+	_, err = s.EnsureSelf(ctx, u)
+	return err
 }
 
 // UpdateUser updates name/email/password/role.

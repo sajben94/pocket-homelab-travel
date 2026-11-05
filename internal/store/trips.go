@@ -8,14 +8,16 @@ import (
 	"time"
 )
 
-const tripCols = `t.id, t.owner_id, t.name, t.destination, t.description, t.start_date, t.end_date, t.status, t.currency, t.budget, t.color, t.cover_path, t.link, t.notes, t.lat, t.lng, t.timezone, t.firefly_tag, t.dawarich, t.immich, t.archived, t.external_id, t.created_at, t.updated_at`
+const tripCols = `t.id, t.owner_id, t.name, t.destination, t.description, t.start_date, t.end_date, t.status, t.currency, t.budget, t.color, t.cover_path, t.link, t.notes, t.lat, t.lng, t.timezone, t.firefly_tag, t.dawarich, t.immich, t.archived, t.external_id, t.created_at, t.updated_at, t.country_code, t.countries`
 
 func scanTrip(row interface{ Scan(...any) error }) (*Trip, error) {
 	var t Trip
 	var dw, im, ar int
-	if err := row.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Destination, &t.Description, &t.StartDate, &t.EndDate, &t.Status, &t.Currency, &t.Budget, &t.Color, &t.CoverPath, &t.Link, &t.Notes, &t.Lat, &t.Lng, &t.Timezone, &t.FireflyTag, &dw, &im, &ar, &t.ExternalID, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	var manual string
+	if err := row.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Destination, &t.Description, &t.StartDate, &t.EndDate, &t.Status, &t.Currency, &t.Budget, &t.Color, &t.CoverPath, &t.Link, &t.Notes, &t.Lat, &t.Lng, &t.Timezone, &t.FireflyTag, &dw, &im, &ar, &t.ExternalID, &t.CreatedAt, &t.UpdatedAt, &t.CountryCode, &manual); err != nil {
 		return nil, notFound(err)
 	}
+	t.CountriesManual = SplitCodes(manual)
 	t.Dawarich, t.Immich, t.Archived = dw == 1, im == 1, ar == 1
 	t.HasCover = t.CoverPath != ""
 	t.Days = DaysBetween(t.StartDate, t.EndDate)
@@ -39,6 +41,9 @@ type TripFilter struct {
 	Archived *bool
 	Status   string
 	Query    string
+	// WithPeople keeps trips on which every one of these people (ids in the
+	// requesting user's address book) was.
+	WithPeople []int64
 }
 
 // ListTrips returns trips the user can see, newest start date first.
@@ -61,6 +66,12 @@ func (s *Store) ListTrips(ctx context.Context, f TripFilter) ([]Trip, error) {
 		q += ` AND t.status = ?`
 		args = append(args, f.Status)
 	}
+	if len(f.WithPeople) > 0 {
+		ph, ids := inInts(f.WithPeople)
+		q += ` AND t.id IN (SELECT trip_id FROM trip_people WHERE person_id IN (` + ph + `) GROUP BY trip_id HAVING COUNT(DISTINCT person_id) = ?)`
+		args = append(args, ids...)
+		args = append(args, len(f.WithPeople))
+	}
 	if f.Query != "" {
 		q += ` AND (t.name LIKE ? OR t.destination LIKE ?)`
 		like := "%" + f.Query + "%"
@@ -76,9 +87,11 @@ func (s *Store) ListTrips(ctx context.Context, f TripFilter) ([]Trip, error) {
 	for rows.Next() {
 		var t Trip
 		var dw, im, ar int
-		if err := rows.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Destination, &t.Description, &t.StartDate, &t.EndDate, &t.Status, &t.Currency, &t.Budget, &t.Color, &t.CoverPath, &t.Link, &t.Notes, &t.Lat, &t.Lng, &t.Timezone, &t.FireflyTag, &dw, &im, &ar, &t.ExternalID, &t.CreatedAt, &t.UpdatedAt, &t.Role); err != nil {
+		var manual string
+		if err := rows.Scan(&t.ID, &t.OwnerID, &t.Name, &t.Destination, &t.Description, &t.StartDate, &t.EndDate, &t.Status, &t.Currency, &t.Budget, &t.Color, &t.CoverPath, &t.Link, &t.Notes, &t.Lat, &t.Lng, &t.Timezone, &t.FireflyTag, &dw, &im, &ar, &t.ExternalID, &t.CreatedAt, &t.UpdatedAt, &t.CountryCode, &manual, &t.Role); err != nil {
 			return nil, err
 		}
+		t.CountriesManual = SplitCodes(manual)
 		t.Dawarich, t.Immich, t.Archived = dw == 1, im == 1, ar == 1
 		t.HasCover = t.CoverPath != ""
 		t.Days = DaysBetween(t.StartDate, t.EndDate)
@@ -196,15 +209,19 @@ func (s *Store) CreateTrip(ctx context.Context, t *Trip, after ...core.CommitHoo
 	if t.Status == "" {
 		t.Status = StatusPlanning
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO trips (owner_id, name, destination, description, start_date, end_date, status, currency, budget, color, cover_path, link, notes, lat, lng, timezone, firefly_tag, dawarich, immich, archived, external_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.OwnerID, t.Name, t.Destination, t.Description, t.StartDate, t.EndDate, t.Status, t.Currency, t.Budget, t.Color, t.CoverPath, t.Link, t.Notes, t.Lat, t.Lng, t.Timezone, t.FireflyTag, boolInt(t.Dawarich), boolInt(t.Immich), boolInt(t.Archived), t.ExternalID)
+	res, err := tx.ExecContext(ctx, `INSERT INTO trips (owner_id, name, destination, description, start_date, end_date, status, currency, budget, color, cover_path, link, notes, lat, lng, timezone, firefly_tag, dawarich, immich, archived, external_id, country_code, countries)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.OwnerID, t.Name, t.Destination, t.Description, t.StartDate, t.EndDate, t.Status, t.Currency, t.Budget, t.Color, t.CoverPath, t.Link, t.Notes, t.Lat, t.Lng, t.Timezone, t.FireflyTag, boolInt(t.Dawarich), boolInt(t.Immich), boolInt(t.Archived), t.ExternalID, t.CountryCode, JoinCodes(t.CountriesManual))
 	if err != nil {
 		return err
 	}
 	t.ID, _ = res.LastInsertId()
 	t.Days = DaysBetween(t.StartDate, t.EndDate)
-	return core.Commit(tx, after...)
+	if err := core.Commit(tx, after...); err != nil {
+		return err
+	}
+	// the owner is on their own trip (and in its shared expenses)
+	return s.AddOwnerToTrip(ctx, t)
 }
 
 // UpdateTrip saves all editable columns.
@@ -214,7 +231,9 @@ func (s *Store) UpdateTrip(ctx context.Context, t *Trip, after ...core.CommitHoo
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `UPDATE trips SET name = ?, destination = ?, description = ?, start_date = ?, end_date = ?, status = ?, currency = ?, budget = ?, color = ?, cover_path = ?, link = ?, notes = ?, lat = ?, lng = ?, timezone = ?, firefly_tag = ?, dawarich = ?, immich = ?, archived = ?, updated_at = ? WHERE id = ?`,
+	_, err = tx.ExecContext(ctx, `UPDATE trips SET country_code = CASE WHEN lat IS ? AND lng IS ? THEN country_code ELSE '' END, countries = ?,
+		name = ?, destination = ?, description = ?, start_date = ?, end_date = ?, status = ?, currency = ?, budget = ?, color = ?, cover_path = ?, link = ?, notes = ?, lat = ?, lng = ?, timezone = ?, firefly_tag = ?, dawarich = ?, immich = ?, archived = ?, updated_at = ? WHERE id = ?`,
+		nullF(t.Lat), nullF(t.Lng), JoinCodes(t.CountriesManual),
 		t.Name, t.Destination, t.Description, t.StartDate, t.EndDate, t.Status, t.Currency, t.Budget, t.Color, t.CoverPath, t.Link, t.Notes, t.Lat, t.Lng, t.Timezone, t.FireflyTag, boolInt(t.Dawarich), boolInt(t.Immich), boolInt(t.Archived), Now(), t.ID)
 	if err != nil {
 		return err
@@ -253,9 +272,9 @@ func (s *Store) TripCounts(ctx context.Context, id int64) (*TripCounts, error) {
 		(SELECT COUNT(1) FROM journal WHERE trip_id = ?),
 		(SELECT COUNT(1) FROM checklist_items i JOIN checklists c ON c.id = i.checklist_id WHERE c.trip_id = ?),
 		(SELECT COUNT(1) FROM checklist_items i JOIN checklists c ON c.id = i.checklist_id WHERE c.trip_id = ? AND i.done = 1),
-		(SELECT COALESCE(SUM(amount_home), 0) FROM expenses WHERE trip_id = ? AND kind = 'planned'),
-		(SELECT COALESCE(SUM(amount_home), 0) FROM expenses WHERE trip_id = ? AND kind = 'actual'),
-		(SELECT COALESCE(SUM(amount_home), 0) FROM expenses WHERE trip_id = ? AND kind = 'planned' AND source = 'item')`,
+		(SELECT COALESCE(SUM(amount_home), 0) FROM expenses WHERE trip_id = ? AND deleted = 0 AND kind = 'planned'),
+		(SELECT COALESCE(SUM(amount_home), 0) FROM expenses WHERE trip_id = ? AND deleted = 0 AND kind = 'actual' AND category <> 'reimbursement'),
+		(SELECT COALESCE(SUM(amount_home), 0) FROM expenses WHERE trip_id = ? AND deleted = 0 AND kind = 'planned' AND source = 'item')`,
 		id, id, id, id, id, id, id, id, id, id, id)
 	var bookings int64
 	if err := row.Scan(&c.Places, &c.Visited, &c.Lodging, &c.Transport, &c.Documents, &c.Journal, &c.Checklist, &c.Checked, &c.Planned, &c.Actual, &bookings); err != nil {
@@ -321,8 +340,8 @@ type HomeStats struct {
 }
 
 // HomeStats aggregates the user's trips.
-func (s *Store) HomeStats(ctx context.Context, userID int64) (*HomeStats, error) {
-	trips, err := s.ListTrips(ctx, TripFilter{UserID: userID})
+func (s *Store) HomeStats(ctx context.Context, userID int64, withPeople ...int64) (*HomeStats, error) {
+	trips, err := s.ListTrips(ctx, TripFilter{UserID: userID, WithPeople: withPeople})
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +374,16 @@ func (s *Store) HomeStats(ctx context.Context, userID int64) (*HomeStats, error)
 	if next != nil {
 		st.NextTripID = next.ID
 	}
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(1), COALESCE(SUM(p.status = 'visited'), 0) FROM places p JOIN trips t ON t.id = p.trip_id WHERE t.archived = 0 AND (t.owner_id = ? OR t.id IN (SELECT trip_id FROM trip_members WHERE user_id = ?))`, userID, userID).Scan(&st.Places, &st.Visited)
+	ids := make([]int64, 0, len(trips))
+	for i := range trips {
+		if !trips[i].Archived {
+			ids = append(ids, trips[i].ID)
+		}
+	}
+	if len(ids) > 0 {
+		ph, args := inInts(ids)
+		_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(1), COALESCE(SUM(status = 'visited'), 0) FROM places WHERE trip_id IN (`+ph+`)`, args...).Scan(&st.Places, &st.Visited)
+	}
 	return st, nil
 }
 

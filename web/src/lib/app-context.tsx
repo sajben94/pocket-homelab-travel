@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { api, V1 } from './api'
+import { api, setPeopleFilter, V1 } from './api'
 import { setDateFormats, type DateFormat, type TimeFormat } from './format'
-import type { Currency, Meta, Settings, Trip, User } from './types'
+import type { Currency, Meta, Person, Settings, Trip, User } from './types'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -23,6 +23,12 @@ interface AppState {
   reloadTrips: () => Promise<void>
   setUser: (u: User | null) => void
   setSettings: (s: Settings) => void
+  /** your address book of travel companions */
+  people: Person[]
+  reloadPeople: () => Promise<void>
+  /** "travelling with": the whole app shows only trips with all of these people */
+  withPeople: number[]
+  setWithPeople: (ids: number[]) => void
 }
 const Ctx = createContext<AppState>(null!)
 export function useApp() { return useContext(Ctx) }
@@ -37,6 +43,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [currencies, setCurrencies] = useState<Currency[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
   const [trips, setTrips] = useState<Trip[]>([])
+  const [people, setPeople] = useState<Person[]>([])
+  const [withPeople, setWithRaw] = useState<number[]>(() => {
+    try { const ids = JSON.parse(localStorage.getItem('pt.with') || '[]'); if (Array.isArray(ids)) { setPeopleFilter(ids); return ids } } catch { /* none */ }
+    return []
+  })
   // The theme follows the system unless set to light or dark.
   const [themeMode, setThemeModeRaw] = useState<ThemeMode>(() => (localStorage.getItem('pt-theme') as ThemeMode) || 'system')
   const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -56,11 +67,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setSettings = useCallback((s: Settings) => { setSettingsRaw(s); setDateFormats(s.date_format as DateFormat, s.time_format as TimeFormat) }, [])
   // The trips in the sidebar and the palette (archived ones stay out).
   const reloadTrips = useCallback(async () => { setTrips(await api.get<Trip[]>(`${V1}/trips?archived=0`).catch(() => [] as Trip[])) }, [])
+  const reloadPeople = useCallback(async () => { setPeople(await api.get<Person[]>(`${V1}/people`).catch(() => [] as Person[])) }, [])
+  const setWithPeople = useCallback((ids: number[]) => {
+    setPeopleFilter(ids)
+    setWithRaw(ids)
+    try { if (ids.length) localStorage.setItem('pt.with', JSON.stringify(ids)); else localStorage.removeItem('pt.with') } catch { /* private mode */ }
+    reloadTrips()
+  }, [reloadTrips])
   const reloadMeta = useCallback(async () => {
     const [u, c, m] = await Promise.all([api.get<User[]>(`${V1}/users`), api.get<Currency[]>(`${V1}/currencies`), api.get<Meta>(`${V1}/meta`).catch(() => EMPTY_META)])
     setUsers(u); setCurrencies(c); setMeta(m)
-    await reloadTrips()
-  }, [reloadTrips])
+    await Promise.all([reloadTrips(), reloadPeople()])
+  }, [reloadTrips, reloadPeople])
   const refresh = useCallback(async () => {
     const st = await api.get<AuthStatus>(`${V1}/auth/status`)
     setStatus(st)
@@ -76,5 +94,5 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener('pt:unauthorized', h)
     return () => window.removeEventListener('pt:unauthorized', h)
   }, [])
-  return <Ctx.Provider value={{ status, user, settings, users, currencies, meta, trips, themeMode, theme, setThemeMode, toggleTheme: () => setThemeMode(theme === 'dark' ? 'light' : 'dark'), refresh, reloadMeta, reloadTrips, setUser, setSettings }}>{children}</Ctx.Provider>
+  return <Ctx.Provider value={{ status, user, settings, users, currencies, meta, trips, themeMode, theme, setThemeMode, toggleTheme: () => setThemeMode(theme === 'dark' ? 'light' : 'dark'), refresh, reloadMeta, reloadTrips, setUser, setSettings, people, reloadPeople, withPeople, setWithPeople }}>{children}</Ctx.Provider>
 }

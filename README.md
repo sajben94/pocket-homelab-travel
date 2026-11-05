@@ -75,7 +75,9 @@ With an OpenAI key (or any compatible endpoint) five more buttons appear: **sugg
 - **Direct**: a URL + token of any Firefly-compatible API: `https://money.example.com/firefly` with a Pocket Money API token, or a real Firefly III with a personal access token. A saved token keeps this mode until you switch, so an existing Firefly setup keeps working.
 - **Off**: no costs are read (the 30-minute job skips you).
 
-With Pocket Core on the box each connection's switch is **Pocket Core | Off**; Direct is under *Advanced: connect directly with a URL and key* (shown as a third option while it is in use, and the only way without Core). Travel reports each person's mode in effect (money, service:dawarich, service:immich) to Core with `PUT /api/v1/links/modes` after registering, after a mode change or disconnect, and every 30 minutes, so Core's Links page shows Direct connections too.
+**Pocket Places** (v0.11.0): each trip's overview shows a card from the person's own Pocket Places with `places:read` ("Show the places on your list at a trip's destination, the lists made for it and where you went during it"): the places to try within 40 km of the trip or in a town named in its destination, the ones you liked there before, the lists made for the trip and the visits during it with what they cost, each opening in Pocket Places. Only through Pocket Core (Settings → Integrations → Pocket Places: **Pocket Core | Off**); the card loads on its own with a 6-second limit, and without Core or with the link off it stays in place and says what it needs.
+
+With Pocket Core on the box each connection's switch is **Pocket Core | Off**; Direct is under *Advanced: connect directly with a URL and key* (shown as a third option while it is in use, and the only way without Core). Travel reports each person's mode in effect (money, service:dawarich, service:immich, movement, places) to Core with `PUT /api/v1/links/modes` after registering, after a mode change or disconnect, and every 30 minutes, so Core's Links page shows Direct connections too.
 
 ## Run it
 

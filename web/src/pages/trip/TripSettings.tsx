@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, uploadForm, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
-import type { APIToken, GeoResult, Trip, TripMember, TripStatus } from '../../lib/types'
+import type { APIToken, CountryDays, GeoResult, Trip, TripStatus } from '../../lib/types'
+import { allCountries, countryName, flag } from '../../lib/countries'
 import { STATUS_LABEL } from '../../lib/types'
 import { TRIP_COLORS } from '../../lib/format'
 import { Card, Confirm, Field, Modal, Segmented, useAsync, useToast } from '../../components/ui'
@@ -11,26 +12,20 @@ import { Select } from '../../components/Select'
 import { AmountInput } from '../../components/Money'
 import { GeoSearch } from '../../components/GeoSearch'
 import { useTrip } from './ctx'
+import { TripPeopleCard } from './TripPeople'
 
 export function TripSettings() {
   const { trip, isOwner, canEdit, reload, edit, ov } = useTrip()
-  const { users, user, status } = useApp()
+  const { status } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
   const [del, setDel] = useState(false)
   const [dup, setDup] = useState(false)
-  const [members, setMembers] = useState<TripMember[]>(trip.members || [])
-  useEffect(() => setMembers(trip.members || []), [trip.members])
   const { data: tokens } = useAsync(() => api.get<APIToken[]>(`${V1}/tokens`), [])
   const base = `${V1}/trips/${trip.id}`
-  const saveMembers = async (list: TripMember[]) => {
-    setMembers(list)
-    try { await api.put(`${base}/members`, { members: list.filter(m => m.role !== 'owner').map(m => ({ user_id: m.user_id, role: m.role })) }); await reload() } catch (e) { toast((e as Error).message, 'err') }
-  }
   const remove = async () => { try { await api.del(base); toast('Trip deleted'); navigate('/trips') } catch (e) { toast((e as Error).message, 'err') } }
   const uploadCover = async (file: File) => { try { await uploadForm(`${base}/cover`, file); await reload(); toast('Cover updated') } catch (e) { toast((e as Error).message, 'err') } }
   const archive = async () => { try { await api.put(base, { archived: !trip.archived }); await reload() } catch (e) { toast((e as Error).message, 'err') } }
-  const others = users.filter(u => u.id !== trip.owner_id)
   const calUrl = `${location.origin}/cal/${trip.id}.ics?token=`
   return (
     <div className="overview-grid">
@@ -46,16 +41,7 @@ export function TripSettings() {
         </dl>
         {canEdit && <div className="row mt"><label className="btn sm"><Icon name="image" size={14} />Upload cover photo…<input type="file" accept="image/*" hidden onChange={e => e.target.files?.[0] && uploadCover(e.target.files[0])} /></label>{trip.has_cover && <button type="button" className="btn ghost sm" onClick={async () => { await api.del(`${base}/cover`); reload() }}>Remove cover</button>}</div>}
       </Card>
-      <Card title="Who can see this trip">
-        <p className="muted small">The owner can do everything. Editors plan, tick and write; viewers only look. Companions need an account (Settings → People).</p>
-        <table className="table compact">
-          <tbody>
-            <tr><td><b>{trip.members?.find(m => m.role === 'owner')?.name || 'Owner'}</b></td><td className="muted">owner</td><td /></tr>
-            {members.filter(m => m.role !== 'owner').map(m => <tr key={m.user_id}><td>{m.name || m.email}</td><td>{isOwner ? <Segmented value={m.role} onChange={r => saveMembers(members.map(x => x.user_id === m.user_id ? { ...x, role: r } : x))} options={[{ value: 'editor', label: 'Editor' }, { value: 'viewer', label: 'Viewer' }]} size="sm" /> : <span className="muted">{m.role}</span>}</td><td className="right">{isOwner && <button type="button" className="btn ghost sm danger-text" onClick={() => saveMembers(members.filter(x => x.user_id !== m.user_id))}>Remove</button>}</td></tr>)}
-          </tbody>
-        </table>
-        {isOwner && others.filter(u => !members.some(m => m.user_id === u.id)).length > 0 && <div className="row mt-sm"><Select value="" onChange={v => { const u = users.find(x => x.id === Number(v)); if (u) saveMembers([...members, { user_id: u.id, name: u.name, email: u.email, role: 'editor' }]) }} options={others.filter(u => !members.some(m => m.user_id === u.id)).map(u => ({ value: String(u.id), label: u.name || u.email, hint: u.email }))} placeholder="+ Add a companion…" /></div>}
-      </Card>
+      <TripPeopleCard />
       <Card title="Export & calendar">
         <div className="row wrap mb-sm">
           <a className="btn sm" href={`${base}/export/calendar.ics`}><Icon name="calendar" size={14} />Calendar (.ics)</a>
@@ -102,7 +88,7 @@ function DuplicateModal({ trip, onClose, onDone }: { trip: Trip; onClose: () => 
 }
 
 /** Create or edit a trip. */
-export function TripModal({ trip, onClose, onSaved }: { trip?: Trip; onClose: () => void; onSaved: (t: Trip) => void }) {
+export function TripModal({ trip, detected = [], onClose, onSaved }: { trip?: Trip; detected?: CountryDays[]; onClose: () => void; onSaved: (t: Trip) => void }) {
   const { settings } = useApp()
   const { toast } = useToast()
   const [f, setF] = useState<Partial<Trip>>(trip ? { ...trip } : { name: '', destination: '', description: '', start_date: '', end_date: '', status: 'planning', currency: settings?.home_currency || 'EUR', budget: 0, color: TRIP_COLORS[0], link: '', notes: '', firefly_tag: '', dawarich: true, immich: true, lat: null, lng: null, timezone: '' })
@@ -128,6 +114,7 @@ export function TripModal({ trip, onClose, onSaved }: { trip?: Trip; onClose: ()
         {tab === 'main' && <>
           <Field label="Name"><input value={f.name || ''} onChange={e => set('name', e.target.value)} required autoFocus={!trip} placeholder="Barcelona 2026" maxLength={80} /></Field>
           <Field label="Destination" help="Search to pin the trip on the map — that's where the weather and 'Discover nearby' look."><GeoSearch onPick={pickDest} placeholder="Barcelona, Tokyo, Yosemite…" initial="" /><input className="mt-sm" value={f.destination || ''} onChange={e => set('destination', e.target.value)} placeholder="Shown on the trip card" /></Field>
+          <CountriesField manual={f.countries_manual || []} detected={detected} onChange={v => set('countries_manual', v)} />
           <div className="two-col tight">
             <Field label="Start"><input type="date" value={f.start_date || ''} onChange={e => set('start_date', e.target.value)} /></Field>
             <Field label="End"><input type="date" value={f.end_date || ''} min={f.start_date || undefined} onChange={e => set('end_date', e.target.value)} /></Field>
@@ -152,5 +139,32 @@ export function TripModal({ trip, onClose, onSaved }: { trip?: Trip; onClose: ()
         <div className="form-actions"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{trip ? 'Save' : 'Create trip'}</button></div>
       </form>
     </Modal>
+  )
+}
+
+/**
+ * The trip's countries. Detected from where you slept and what you visited
+ * (shown with their days); editing the list makes it yours, and only those
+ * countries count. Empty = detect again.
+ */
+function CountriesField({ manual, detected, onChange }: { manual: string[]; detected: CountryDays[]; onChange: (codes: string[]) => void }) {
+  const options = useMemo(() => allCountries().map(c => ({ value: c.code, label: `${flag(c.code)} ${c.name}` })), [])
+  const auto = detected.filter(c => c.days > 0).map(c => c.code)
+  const list = manual.length ? manual : auto
+  const days = (code: string) => detected.find(c => c.code === code)?.days || 0
+  const edit = (codes: string[]) => onChange(codes)
+  return (
+    <Field group label="Countries" help={manual.length ? 'Your list: only these countries count for this trip.' : auto.length ? 'Detected from the stays and places of the trip. Add or remove one to set them yourself.' : 'Detected from the stays and places once they have a location — or add them here.'}>
+      <div className="row wrap" style={{ gap: 6 }}>
+        {list.map(code => (
+          <span key={code} className={`country-chip ${manual.length ? '' : 'auto'}`} title={countryName(code)}>
+            {flag(code)} {countryName(code)}{days(code) > 0 && <span className="muted"> · {days(code)}d</span>}
+            <button type="button" className="icon-btn" aria-label={`Remove ${countryName(code)}`} onClick={() => edit(list.filter(c => c !== code))} style={{ width: 20, height: 20 }}><Icon name="x" size={12} /></button>
+          </span>
+        ))}
+        <div style={{ minWidth: 200 }}><Select value="" onChange={v => v && !list.includes(v) && edit([...list, v])} options={options.filter(o => !list.includes(o.value))} placeholder="Add a country…" ariaLabel="Add a country" /></div>
+        {manual.length > 0 && <button type="button" className="btn ghost sm" onClick={() => edit([])}>Use detected</button>}
+      </div>
+    </Field>
   )
 }

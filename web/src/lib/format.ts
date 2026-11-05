@@ -175,3 +175,44 @@ export function cap(s: string): string { return s ? s[0].toUpperCase() + s.slice
 export function gmaps(lat: number, lng: number): string { return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}` }
 export function appleMaps(lat: number, lng: number): string { return `https://maps.apple.com/?daddr=${lat},${lng}` }
 export function osmLink(lat: number, lng: number): string { return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}` }
+
+/** Where a place sits within its day on the itinerary: timed places by their
+ * time, untimed ones after them in the order they were dragged into. */
+export function placeWhen(p: { start_time: string; sort_order: number }): string {
+  return p.start_time || '99:' + String(p.sort_order).padStart(3, '0')
+}
+
+/** Itinerary order: by day, then as the day lists them (see placeWhen). */
+export function itineraryOrder(a: { day_date: string; start_time: string; sort_order: number; id: number }, b: { day_date: string; start_time: string; sort_order: number; id: number }): number {
+  return a.day_date.localeCompare(b.day_date) || placeWhen(a).localeCompare(placeWhen(b)) || a.id - b.id
+}
+
+/** The time part of a stay's check-in/out ("2026-07-05T15:00" → "15:00"), "" when only a day is stored. */
+export function stayClock(v?: string): string {
+  return v && v.length >= 16 && v[10] === 'T' ? v.slice(11, 16) : ''
+}
+
+/** A day plus an optional time, as stays store them: "2026-07-05" + "15:00" → "2026-07-05T15:00". */
+export function withClock(day?: string, time?: string): string {
+  const d = (day || '').slice(0, 10)
+  return d && time ? `${d}T${time}` : d
+}
+
+/** When a stay's check-in or check-out happens: its own time, else the person's default. */
+export function stayTime(v: string, which: 'in' | 'out', s?: { checkin_time?: string; checkout_time?: string } | null): string {
+  return stayClock(v) || (which === 'in' ? s?.checkin_time || '15:00' : s?.checkout_time || '11:00')
+}
+
+/** A bill with the extra parts of its uneven split folded in. */
+export type GroupedBill<E> = E & { total: number; total_home: number; parts: E[] }
+
+/** Folds the extra parts of uneven splits into their bills (parts whose bill is not in the list stay on their own). */
+export function groupBills<E extends { id: number; parent_id: number | null; amount: number; amount_home: number }>(list: E[]): GroupedBill<E>[] {
+  const ids = new Set(list.map(e => e.id))
+  const parts = new Map<number, E[]>()
+  for (const e of list) if (e.parent_id != null && ids.has(e.parent_id)) parts.set(e.parent_id, [...(parts.get(e.parent_id) || []), e])
+  return list.filter(e => e.parent_id == null || !ids.has(e.parent_id)).map(e => {
+    const p = parts.get(e.id) || []
+    return { ...e, parts: p, total: e.amount + p.reduce((n, x) => n + x.amount, 0), total_home: e.amount_home + p.reduce((n, x) => n + x.amount_home, 0) }
+  })
+}

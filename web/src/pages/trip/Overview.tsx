@@ -3,17 +3,18 @@ import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { Activity, Lodging, Place, Transport } from '../../lib/types'
 import { LODGING_ICONS, PLACE_ICONS, TRANSPORT_ICONS, WX_ICON } from '../../lib/types'
-import { ago, daysBetween, fmtClock, fmtDate, fmtDateTime, fmtKm, plural, todayISO, weekday } from '../../lib/format'
+import { ago, daysBetween, fmtClock, fmtDate, fmtDateTime, fmtKm, plural, stayTime, todayISO, weekday } from '../../lib/format'
 import { Card, useAsync } from '../../components/ui'
 import { Icon } from '../../components/icons'
+import { CountryBrief } from '../../components/CountryFacts'
+import { countryName, flag } from '../../lib/countries'
 import { Money } from '../../components/Money'
 import { useTrip } from './ctx'
+import { PeopleStrip } from './TripPeople'
 import { RecapModal } from './ai'
+import { PocketPlacesCard } from './PocketPlaces'
 import { useState } from 'react'
 
-const regionNames = typeof Intl !== 'undefined' && 'DisplayNames' in Intl ? new Intl.DisplayNames(undefined, { type: 'region' }) : null
-/** A country's name from its ISO code, in the browser's language. */
-const countryName = (code: string) => { try { return regionNames?.of(code) || code } catch { return code } }
 
 export function OverviewTab() {
   const { ov, trip, weather, route, timeline, photos, extErrors, refreshExternal, canEdit, edit, go } = useTrip()
@@ -24,13 +25,15 @@ export function OverviewTab() {
   const b = ov.budget
   const running = trip.start_date && trip.start_date <= today && trip.end_date >= today
   const past = trip.end_date && trip.end_date < today
+  // the trip's countries: detected (or set) with days, else the destination's while nothing else is known
+  const tripCountries = ov.countries.length ? ov.countries : trip.country_code && trip.country_code.length === 2 ? [{ code: trip.country_code, days: 0, first: '' }] : []
   const until = trip.start_date > today ? daysBetween(today, trip.start_date) : 0
   // Next up: the next scheduled thing from now.
   const nowStamp = `${today}T${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`
   const upcoming: { when: string; label: string; sub: string; icon: string; onClick: () => void }[] = []
   for (const p of ov.places) if (p.day_date && p.status !== 'visited' && p.status !== 'skipped') upcoming.push({ when: p.day_date + 'T' + (p.start_time || '23:59'), label: p.name, sub: `${fmtDate(p.day_date, false)}${p.start_time ? ' · ' + fmtClock(p.start_time) : ''}`, icon: PLACE_ICONS[p.category] || '📍', onClick: () => edit('place', p) })
   for (const t of ov.transport) if (t.depart_at) upcoming.push({ when: t.depart_at, label: t.name || `${t.from_name} → ${t.to_name}`, sub: fmtDateTime(t.depart_at, false), icon: TRANSPORT_ICONS[t.type] || '➡️', onClick: () => edit('transport', t) })
-  for (const l of ov.lodging) if (l.check_in) upcoming.push({ when: l.check_in.slice(0, 10) + 'T15:00', label: `Check in · ${l.name}`, sub: fmtDate(l.check_in, false), icon: LODGING_ICONS[l.type] || '🛏', onClick: () => edit('lodging', l) })
+  for (const l of ov.lodging) if (l.check_in) upcoming.push({ when: l.check_in.slice(0, 10) + 'T' + stayTime(l.check_in, 'in', settings), label: `Check in · ${l.name}`, sub: fmtDate(l.check_in, false), icon: LODGING_ICONS[l.type] || '🛏', onClick: () => edit('lodging', l) })
   const next = upcoming.filter(u => u.when >= nowStamp).sort((a, b) => a.when.localeCompare(b.when)).slice(0, 4)
   const stay = ov.lodging.find(l => l.check_in.slice(0, 10) <= today && today < l.check_out.slice(0, 10))
   const visited = ov.places.filter(p => p.status === 'visited').length
@@ -42,6 +45,8 @@ export function OverviewTab() {
   const unit = settings?.distance_unit || 'km'
   const integ = ov.integrations
   return (
+    <>
+    <PeopleStrip title="On this trip" />
     <div className="overview-grid">
       <Card title={running ? 'Right now' : past ? 'How it went' : 'Countdown'}>
         {running && <><div className="countdown">{daysBetween(trip.start_date, today) + 1}<small>of {trip.days} days</small></div>
@@ -74,6 +79,9 @@ export function OverviewTab() {
         {ov.lodging.length === 0 && !past && <p className="muted small">No stay yet. <a href="#" onClick={e => { e.preventDefault(); edit('lodging', null, {}) }}>Add where you sleep</a>.</p>}
         {ov.transport.length === 0 && !past && <p className="muted small">No transport yet. <a href="#" onClick={e => { e.preventDefault(); edit('transport', null, {}) }}>Add the flight, train or drive</a>.</p>}
       </Card>
+      {tripCountries.length > 0 && (past
+        ? <Card title="Countries" className="span2"><div className="row wrap" style={{ gap: 8 }}>{tripCountries.map(c => <Link key={c.code} to={`/countries/${c.code}`} className="country-chip">{flag(c.code)} {countryName(c.code)}{c.days > 0 && <span className="muted"> · {c.days} d</span>}</Link>)}</div></Card>
+        : <Card title={tripCountries.length > 1 ? "Where you're going" : `Where you're going · ${countryName(tripCountries[0].code)}`} className="span2"><div className="briefs">{tripCountries.map(c => <CountryBrief key={c.code} code={c.code} days={tripCountries.length > 1 ? c.days : undefined} />)}</div></Card>)}
       {wx.length > 0 && <Card title={`Weather${trip.destination ? ' · ' + trip.destination : ''}`} className="span2">
         <div className="wx-strip">{wx.map(w => <div key={w.date} className={`wx-day ${w.date === today ? 'today' : ''}`} title={`${w.label}${w.precip_mm ? ` · ${w.precip_mm.toFixed(1)} mm` : ''} · wind ${Math.round(w.wind_kmh)} km/h`}><div className="muted">{weekday(w.date)} {fmtDate(w.date, false)}</div><div className="big">{WX_ICON(w.code)}</div><div><b>{Math.round(w.tmax)}°</b> <span className="muted">{Math.round(w.tmin)}°</span></div>{w.precip_mm >= 1 && <div className="muted row" style={{ justifyContent: 'center', gap: 2 }}><Icon name="droplet" size={11} />{w.precip_mm.toFixed(0)}</div>}</div>)}</div>
         <p className="muted small mt-sm" style={{ margin: '6px 0 0' }}>Open-Meteo · {wx.some(w => w.source === 'archive') ? 'recorded weather for past days, ' : ''}forecast up to 16 days ahead.</p>
@@ -108,7 +116,10 @@ export function OverviewTab() {
       {trip.description && <Card title="About this trip" className="span2"><p style={{ whiteSpace: 'pre-wrap' }}>{trip.description}</p>{trip.link && <a href={trip.link} target="_blank" rel="noreferrer">{trip.link}</a>}</Card>}
       {trip.notes && <Card title="Notes" className="span2"><p style={{ whiteSpace: 'pre-wrap' }}>{trip.notes}</p></Card>}
       {!integ.firefly.configured && !integ.dawarich.configured && !integ.immich.configured && <Card title="Connect your other apps" className="span2"><p className="muted">Connect <b>Pocket Money</b> to see what the trip really cost, <b>Pocket Movement</b> (through Pocket Core) or <b>Dawarich</b> for the route you actually took, and <b>Immich</b> for the photos — all under <Link to="/settings/integrations">Settings → Integrations</Link>.</p></Card>}
+      {/* last, so it never pushes the cards above it while it loads */}
+      <PocketPlacesCard />
     </div>
+    </>
   )
 }
 

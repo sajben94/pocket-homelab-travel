@@ -2,11 +2,11 @@ package store
 
 import "context"
 
-const placeCols = `id, trip_id, name, category, description, address, lat, lng, link, phone, rating, price, currency, day_date, start_time, duration_min, status, visited_at, booking_ref, tags, notes, image_path, sort_order, external_id, created_at, updated_at`
+const placeCols = `id, trip_id, name, category, description, address, lat, lng, link, phone, rating, price, currency, day_date, start_time, duration_min, status, visited_at, booking_ref, tags, notes, image_path, sort_order, external_id, created_at, updated_at, country_code`
 
 func scanPlace(row interface{ Scan(...any) error }) (*Place, error) {
 	var p Place
-	if err := row.Scan(&p.ID, &p.TripID, &p.Name, &p.Category, &p.Description, &p.Address, &p.Lat, &p.Lng, &p.Link, &p.Phone, &p.Rating, &p.Price, &p.Currency, &p.DayDate, &p.StartTime, &p.DurationMin, &p.Status, &p.VisitedAt, &p.BookingRef, &p.Tags, &p.Notes, &p.ImagePath, &p.SortOrder, &p.ExternalID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.TripID, &p.Name, &p.Category, &p.Description, &p.Address, &p.Lat, &p.Lng, &p.Link, &p.Phone, &p.Rating, &p.Price, &p.Currency, &p.DayDate, &p.StartTime, &p.DurationMin, &p.Status, &p.VisitedAt, &p.BookingRef, &p.Tags, &p.Notes, &p.ImagePath, &p.SortOrder, &p.ExternalID, &p.CreatedAt, &p.UpdatedAt, &p.CountryCode); err != nil {
 		return nil, notFound(err)
 	}
 	p.HasImage = p.ImagePath != ""
@@ -60,8 +60,8 @@ func (s *Store) CreatePlace(ctx context.Context, p *Place) error {
 
 // UpdatePlace saves a place.
 func (s *Store) UpdatePlace(ctx context.Context, p *Place) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE places SET name = ?, category = ?, description = ?, address = ?, lat = ?, lng = ?, link = ?, phone = ?, rating = ?, price = ?, currency = ?, day_date = ?, start_time = ?, duration_min = ?, status = ?, visited_at = ?, booking_ref = ?, tags = ?, notes = ?, image_path = ?, sort_order = ?, updated_at = ? WHERE id = ? AND trip_id = ?`,
-		p.Name, p.Category, p.Description, p.Address, p.Lat, p.Lng, p.Link, p.Phone, p.Rating, p.Price, p.Currency, p.DayDate, p.StartTime, p.DurationMin, p.Status, p.VisitedAt, p.BookingRef, p.Tags, p.Notes, p.ImagePath, p.SortOrder, Now(), p.ID, p.TripID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE places SET country_code = CASE WHEN lat IS ? AND lng IS ? THEN country_code ELSE '' END, name = ?, category = ?, description = ?, address = ?, lat = ?, lng = ?, link = ?, phone = ?, rating = ?, price = ?, currency = ?, day_date = ?, start_time = ?, duration_min = ?, status = ?, visited_at = ?, booking_ref = ?, tags = ?, notes = ?, image_path = ?, sort_order = ?, updated_at = ? WHERE id = ? AND trip_id = ?`,
+		nullF(p.Lat), nullF(p.Lng), p.Name, p.Category, p.Description, p.Address, p.Lat, p.Lng, p.Link, p.Phone, p.Rating, p.Price, p.Currency, p.DayDate, p.StartTime, p.DurationMin, p.Status, p.VisitedAt, p.BookingRef, p.Tags, p.Notes, p.ImagePath, p.SortOrder, Now(), p.ID, p.TripID)
 	p.HasImage = p.ImagePath != ""
 	return err
 }
@@ -95,12 +95,12 @@ func (s *Store) ReorderPlaces(ctx context.Context, tripID int64, day string, ids
 
 // ---- lodging ----
 
-const lodgingCols = `id, trip_id, name, type, address, lat, lng, check_in, check_out, reservation_number, link, phone, price, currency, paid, rating, notes, image_path, external_id, created_at, updated_at`
+const lodgingCols = `id, trip_id, name, type, address, lat, lng, check_in, check_out, reservation_number, link, phone, price, currency, paid, rating, notes, image_path, external_id, created_at, updated_at, country_code`
 
 func scanLodging(row interface{ Scan(...any) error }) (*Lodging, error) {
 	var l Lodging
 	var paid int
-	if err := row.Scan(&l.ID, &l.TripID, &l.Name, &l.Type, &l.Address, &l.Lat, &l.Lng, &l.CheckIn, &l.CheckOut, &l.ReservationNumber, &l.Link, &l.Phone, &l.Price, &l.Currency, &paid, &l.Rating, &l.Notes, &l.ImagePath, &l.ExternalID, &l.CreatedAt, &l.UpdatedAt); err != nil {
+	if err := row.Scan(&l.ID, &l.TripID, &l.Name, &l.Type, &l.Address, &l.Lat, &l.Lng, &l.CheckIn, &l.CheckOut, &l.ReservationNumber, &l.Link, &l.Phone, &l.Price, &l.Currency, &paid, &l.Rating, &l.Notes, &l.ImagePath, &l.ExternalID, &l.CreatedAt, &l.UpdatedAt, &l.CountryCode); err != nil {
 		return nil, notFound(err)
 	}
 	l.Paid = paid == 1
@@ -149,8 +149,8 @@ func (s *Store) CreateLodging(ctx context.Context, l *Lodging) error {
 
 // UpdateLodging saves a stay.
 func (s *Store) UpdateLodging(ctx context.Context, l *Lodging) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE lodging SET name = ?, type = ?, address = ?, lat = ?, lng = ?, check_in = ?, check_out = ?, reservation_number = ?, link = ?, phone = ?, price = ?, currency = ?, paid = ?, rating = ?, notes = ?, image_path = ?, updated_at = ? WHERE id = ? AND trip_id = ?`,
-		l.Name, l.Type, l.Address, l.Lat, l.Lng, l.CheckIn, l.CheckOut, l.ReservationNumber, l.Link, l.Phone, l.Price, l.Currency, boolInt(l.Paid), l.Rating, l.Notes, l.ImagePath, Now(), l.ID, l.TripID)
+	_, err := s.DB.ExecContext(ctx, `UPDATE lodging SET country_code = CASE WHEN lat IS ? AND lng IS ? THEN country_code ELSE '' END, name = ?, type = ?, address = ?, lat = ?, lng = ?, check_in = ?, check_out = ?, reservation_number = ?, link = ?, phone = ?, price = ?, currency = ?, paid = ?, rating = ?, notes = ?, image_path = ?, updated_at = ? WHERE id = ? AND trip_id = ?`,
+		nullF(l.Lat), nullF(l.Lng), l.Name, l.Type, l.Address, l.Lat, l.Lng, l.CheckIn, l.CheckOut, l.ReservationNumber, l.Link, l.Phone, l.Price, l.Currency, boolInt(l.Paid), l.Rating, l.Notes, l.ImagePath, Now(), l.ID, l.TripID)
 	l.HasImage = l.ImagePath != ""
 	return err
 }

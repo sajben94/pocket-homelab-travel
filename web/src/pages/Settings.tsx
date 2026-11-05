@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
+import { CospendImport } from '../components/CospendImport'
 import type { APIToken, ConnMode, Settings as SettingsT, User } from '../lib/types'
 import { DATE_FORMATS, TIME_FORMATS, fmtBytes, fmtDateTime, type DateFormat, type TimeFormat } from '../lib/format'
 import { Avatar, Confirm, Field, Loading, Modal, Segmented, SettingRow, Switch, Tabs, useAsync, useIsMobile, useToast } from '../components/ui'
@@ -12,13 +13,14 @@ import { Select } from '../components/Select'
 import { CurrencySelect } from '../components/Money'
 import { TILES } from '../components/Map'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
+import { NeedsCore } from '../components/NeedsCore'
 
 type TabId = 'general' | 'integrations' | 'import' | 'profile' | 'users' | 'api' | 'data' | 'about'
 
 const TABS: { id: TabId; label: string; icon: string; sub: string }[] = [
   { id: 'general', label: 'General', icon: 'settings', sub: 'Currency, distances, maps, date and time formats, and the app title.' },
-  { id: 'integrations', label: 'Integrations', icon: 'layers', sub: 'Pocket Money, Pocket Movement or Dawarich, Immich and OpenAI — your own accounts, through Pocket Core or directly.' },
-  { id: 'import', label: 'Import', icon: 'download', sub: 'Bring collections over from AdventureLog, or restore a trip from a JSON backup.' },
+  { id: 'integrations', label: 'Integrations', icon: 'layers', sub: 'Pocket Money, Pocket Movement or Dawarich, Pocket Places, Immich and OpenAI — your own accounts, through Pocket Core or directly.' },
+  { id: 'import', label: 'Import', icon: 'download', sub: 'Bring projects over from Nextcloud Cospend, collections from AdventureLog, or restore a trip from a JSON backup.' },
   { id: 'profile', label: 'Profile', icon: 'user', sub: 'Your name, email and password.' },
   { id: 'users', label: 'People', icon: 'users', sub: 'Everyone who has an account on this box.' },
   { id: 'api', label: 'API tokens', icon: 'key', sub: 'Personal tokens for widgets, scripts and calendar subscriptions.' },
@@ -137,6 +139,10 @@ function General() {
         <SettingRow title="Date format"><Select value={f.date_format} onChange={v => setF({ ...f, date_format: v as DateFormat })} options={DATE_FORMATS.map(d => ({ value: d.id, label: d.label }))} /></SettingRow>
         <SettingRow title="Time format"><Select value={f.time_format} onChange={v => setF({ ...f, time_format: v as TimeFormat })} options={TIME_FORMATS.map(d => ({ value: d.id, label: d.label }))} /></SettingRow>
       </Section>
+      <Section title="Stays" sub="What a new stay starts with; each stay can still have its own times.">
+        <SettingRow title="Default check-in" help="Also used for stays saved without a time."><input type="time" value={f.checkin_time || '15:00'} onChange={e => setF({ ...f, checkin_time: e.target.value })} style={{ width: 130 }} aria-label="Default check-in time" /></SettingRow>
+        <SettingRow title="Default check-out"><input type="time" value={f.checkout_time || '11:00'} onChange={e => setF({ ...f, checkout_time: e.target.value })} style={{ width: 130 }} aria-label="Default check-out time" /></SettingRow>
+      </Section>
       <Section title="Maps & places">
         <SettingRow title="Map tiles" help="All free and keyless. Satellite is Esri imagery with a labels layer on top."><Select value={f.map_tiles} onChange={v => setF({ ...f, map_tiles: v })} options={Object.entries(TILES).map(([v, t]) => ({ value: v, label: t.label }))} /></SettingRow>
         <SettingRow title="Find photos for new places" help="Wikipedia and Wikimedia Commons, with credits."><Switch checked={f.auto_photos} onChange={v => setF({ ...f, auto_photos: v })} label="Find photos for new places" /></SettingRow>
@@ -165,7 +171,7 @@ function Integrations() {
   const { f, setF, save, busy } = useSettingsForm()
   const [test, setTest] = useState<Record<string, string>>({})
   if (!f) return <Loading />
-  const run = async (which: 'money' | 'movement' | 'dawarich' | 'immich' | 'openai', url: string, key: string) => {
+  const run = async (which: 'money' | 'movement' | 'dawarich' | 'places' | 'immich' | 'openai', url: string, key: string) => {
     setTest(t => ({ ...t, [which]: 'testing…' }))
     try { const r = await api.post<{ ok: boolean; message?: string; error?: string }>(`${V1}/integrations/test`, { which, url, key }); setTest(t => ({ ...t, [which]: r.ok ? `✓ ${r.message}` : `✕ ${r.error}` })) } catch (e) { setTest(t => ({ ...t, [which]: `✕ ${(e as Error).message}` })) }
   }
@@ -192,7 +198,7 @@ function Integrations() {
   )
   return (
     <div className="stack loose">
-      <div className="callout info"><Icon name="info" size={15} /><span>These are your own accounts. Each person connects their own Pocket Money, Pocket Movement or Dawarich, Immich and OpenAI (through Pocket Core, with your own key there, or directly); nobody else on this box uses yours. On a trip shared with you, the route and photos come from your accounts and the spending from the trip owner's Pocket Money.</span></div>
+      <div className="callout info"><Icon name="info" size={15} /><span>These are your own accounts. Each person connects their own Pocket Money, Pocket Movement or Dawarich, Pocket Places, Immich and OpenAI (through Pocket Core, with your own key there, or directly); nobody else on this box uses yours. On a trip shared with you, the route and photos come from your accounts and the spending from the trip owner's Pocket Money.</span></div>
       <Section title="Pocket Money" icon="wallet" actions={connBadge(shownMode(f.money_mode, f.core_ready), f.money_via)} sub={<>What the trip really cost. Tag the expenses in Pocket Money (e.g. "lisbon 2027") and set the same Money tag on the trip; they appear as spent, in their own currency, converted at the day's rate. Synced every 30 minutes while a trip is running or upcoming, and on demand.</>}>
         <Connection app="Pocket Money" mode={f.money_mode} via={f.money_via} detail={f.money_detail} core={f.core_ready} hasToken={!!f.firefly_token}
           onMode={m => save({ money_mode: m })} onDisconnect={() => save({ firefly_url: '', firefly_token: '' })}
@@ -204,6 +210,11 @@ function Integrations() {
       </Section>
       <LocationSource f={f} save={save} test={<><button type="button" className="btn sm" onClick={() => run('movement', '', '')}>Test Pocket Movement</button>{status('movement')}</>}
         dawarich={conn('dawarich', 'Dawarich', 'dawarich_url', 'dawarich_api_key', 'Dawarich → Account → API key. Behind HTTPS use the public name; plain http works too.')} />
+      <Section title="Pocket Places" icon="pin" actions={connBadge(f.places_mode, f.places_via)} sub="On each trip's page: the places on your list at the destination (to try, and the ones you liked before), the lists you made for the trip and where you went during it, with what it cost. Read from your own Pocket Places; nothing is changed there.">
+        <Connection app="Pocket Places" coreOnly mode={f.places_mode} via={f.places_via} detail={f.places_detail} core={f.core_ready} hasToken={false}
+          onMode={m => save({ places_mode: m === 'off' ? 'off' : 'core' })} onDisconnect={() => {}}
+          test={<><button type="button" className="btn sm" onClick={() => run('places', '', '')}>Test Pocket Places</button>{status('places')}</>} direct={null} />
+      </Section>
       {block('immich', 'Immich', 'camera', 'Immich', 'immich_url', 'immich_api_key', 'Every photo and video taken between the trip dates, grouped by day; the geotagged ones land on the map. Thumbnails are proxied so the browser never sees the key.', 'Immich → Account settings → API keys.')}
       <Section title="AI provider" icon="sparkles" actions={<span className={`badge ${f.ai_configured ? 'ok' : ''}`}>{f.ai_configured ? 'connected' : 'not set'}</span>}
         sub={<>Optional. Adds five buttons: <b>Suggest places</b> (popular, well-rated places for the destination, located with OpenStreetMap), <b>Plan my days</b> (assigns ideas to days and times), <b>Describe</b> a place with practical tips, a <b>packing list</b> tailored to the trip and weather, and a <b>recap</b> written from your journal, visited places and spending. Trip details are sent to the provider when you use them; nothing runs automatically.</>}>
@@ -227,13 +238,6 @@ function Integrations() {
   )
 }
 
-/** A choice that only works through Pocket Core, on a box without one: what it needs, next to the control. */
-function NeedsCore({ what }: { what?: string }) {
-  return (
-    <p className="needs-core">{what ? `${what} needs Pocket Core.` : 'Needs Pocket Core.'} Pocket Core connects your Pocket apps to each other and to your services: one sign-in for everyone, each person's own accounts, nothing to copy or paste. Set CORE_URL to connect this app. <a href="https://github.com/abjelosevic88/pocket-homelab-core" target="_blank" rel="noreferrer">Learn more</a></p>
-  )
-}
-
 /** The mode in effect as Settings shows it: a saved "core" without Pocket Core is Direct (the only way in then). */
 const shownMode = (mode: ConnMode, core: boolean): ConnMode => mode === 'core' && !core ? 'direct' : mode
 
@@ -247,14 +251,15 @@ const shownMode = (mode: ConnMode, core: boolean): ConnMode => mode === 'core' &
  * use); without Core (`core` = connected and registered), Pocket Core shows
  * greyed out with what it needs and Direct is the way in.
  */
-function Connection({ app, mode: saved, via, detail, core, onMode, onDisconnect, hasToken, test, direct, service, source }: {
+function Connection({ app, mode: saved, via, detail, core, onMode, onDisconnect, hasToken, test, direct, service, source, coreOnly }: {
   app: string; mode: ConnMode; via: string; detail: string; core: boolean; onMode: (m: ConnMode) => void; onDisconnect: () => void
-  hasToken: boolean; test: React.ReactNode; direct: React.ReactNode; service?: boolean; source?: string
+  hasToken: boolean; test: React.ReactNode; direct: React.ReactNode; service?: boolean; source?: string; coreOnly?: boolean
 }) {
-  const mode = shownMode(saved, core)
+  // an app that only comes through Pocket Core (coreOnly) never offers Direct; without Core its Pocket Core choice shows greyed out
+  const mode = coreOnly ? (saved === 'off' ? 'off' : 'core') : shownMode(saved, core)
   const ok = via !== ''
   const [advanced, setAdvanced] = useState(false)
-  const showDirect = !core || mode === 'direct' || advanced
+  const showDirect = !coreOnly && (!core || mode === 'direct' || advanced)
   const secret = service ? 'API key' : 'token'
   const coreOk = service
     ? `Connected through Pocket Core (${source === 'box' ? "the box's key" : 'your own key'}). Nothing to fill in; switch it off for yourself in Pocket Core → Settings → Apps acting for me.`
@@ -270,15 +275,15 @@ function Connection({ app, mode: saved, via, detail, core, onMode, onDisconnect,
           ...(showDirect ? [{ value: 'direct', label: 'Direct', title: service ? 'Your own URL and API key' : 'Your own URL and API token' }] : []),
           { value: 'off', label: 'Off' },
         ]} />
-        {!showDirect && <button type="button" className="conn-advanced" onClick={() => setAdvanced(true)}>Advanced: connect directly with a URL and key</button>}
+        {!showDirect && !coreOnly && <button type="button" className="conn-advanced" onClick={() => setAdvanced(true)}>Advanced: connect directly with a URL and key</button>}
       </div>
-      {!core && <NeedsCore what={`${app} through Pocket Core`} />}
+      {!core && <NeedsCore what={coreOnly ? app : `${app} through Pocket Core`} />}
       <div className={`conn-status ${mode === 'off' ? '' : ok ? 'ok' : 'bad'}`}><span className="dot" />{line}</div>
       {mode === 'direct' && <>
         {direct}
         <div className="row wrap">{test}{hasToken && <button type="button" className="btn sm ghost danger-text" onClick={onDisconnect} title={`Remove the saved URL and ${secret}`}>Disconnect</button>}</div>
       </>}
-      {mode === 'core' && <div className="row wrap">{test}</div>}
+      {mode === 'core' && core && <div className="row wrap">{test}</div>}
     </div>
   )
 }
@@ -351,6 +356,9 @@ function Import() {
   }
   return (
     <div className="stack loose">
+      <Section title="From Nextcloud Cospend" icon="download" sub="A Cospend project's people, bills, categories and payment methods, through its share link — into a new trip or one of yours. Import again any time: it updates instead of doubling.">
+        <CospendImport />
+      </Section>
       <Section title="From AdventureLog" icon="download" sub="Collections become trips; locations, lodging, transportation, notes and checklists come along, with their images. Re-running skips what is already here. Legs that AdventureLog imported from Dawarich are left out — the route is live here.">
         <form onSubmit={list} className="grid" style={{ gap: 12 }}>
           <Field label="AdventureLog URL"><input value={al.url} onChange={e => setAL({ ...al, url: e.target.value })} placeholder="https://adventurelog.example.com" required /></Field>

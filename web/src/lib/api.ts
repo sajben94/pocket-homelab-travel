@@ -9,7 +9,19 @@ export class ApiError extends Error {
   }
 }
 
+// "Travelling with": person ids the trip lists are narrowed to. Every GET of a
+// list of trips (or something made from them) carries ?with=…; one trip, its
+// items and everything else are never narrowed.
+let peopleFilter: number[] = []
+export function setPeopleFilter(ids: number[]) { peopleFilter = ids }
+const NARROWED = /\/api\/v1\/(trips|home|stats|search)(\?|$)|\/api\/v1\/countries\/[A-Za-z]{2}(\?|$)/
+function narrow(method: string, url: string): string {
+  if (method !== 'GET' || !peopleFilter.length || !NARROWED.test(url)) return url
+  return url + (url.includes('?') ? '&' : '?') + 'with=' + peopleFilter.join(',')
+}
+
 async function request<T>(method: string, url: string, body?: unknown, raw = false): Promise<T> {
+  url = narrow(method, url)
   const init: RequestInit = { method, headers: {}, credentials: 'same-origin' }
   if (body !== undefined) {
     ;(init.headers as Record<string, string>)['Content-Type'] = 'application/json'

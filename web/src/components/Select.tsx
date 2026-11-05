@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './icons'
+import { fold } from '../lib/search'
 
 export interface SelectOption { value: string; label: string; hint?: string; group?: string; /** shown, not pickable */ disabled?: boolean }
 
@@ -34,8 +35,9 @@ export function Select({ value, onChange, options, placeholder = 'Choose…', on
 
   const current = options.find(o => o.value === value)
   const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    return s ? options.filter(o => o.label.toLowerCase().includes(s) || (o.hint || '').toLowerCase().includes(s)) : options
+    // accents are ignored: "cafe" finds "Café Central"
+    const s = fold(q.trim())
+    return s ? options.filter(o => fold(o.label).includes(s) || fold(o.hint || '').includes(s) || fold(o.group || '').includes(s)) : options
   }, [q, options])
   const norm = (l: string) => l.replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase()
   const exact = filtered.some(o => norm(o.label) === q.trim().toLowerCase())
@@ -84,7 +86,10 @@ export function Select({ value, onChange, options, placeholder = 'Choose…', on
 
   let group = ''
   return (
-    <div ref={root} className={`sel ${className} ${open ? 'open' : ''}`} onKeyDown={open ? onKey : undefined}>
+    <div ref={root} className={`sel ${className} ${open ? 'open' : ''}`} onKeyDown={open ? onKey : undefined}
+      // Selects often sit inside a <label> (Field): a click in the list would then also
+      // "activate" the label, which clicks the toggle button and reopens the list.
+      onClick={e => { if ((e.target as HTMLElement).closest('.sel-pop')) e.preventDefault() }}>
       <button type="button" className={`sel-btn ${current ? '' : 'is-empty'}`} onClick={() => !disabled && setOpen(o => !o)} aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} aria-controls={id} disabled={disabled}
         onKeyDown={e => { if (!open && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen(true) } }}>
         <span className="sel-val">{current ? current.label : placeholder}</span>

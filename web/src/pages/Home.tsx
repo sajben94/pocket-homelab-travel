@@ -1,9 +1,10 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { api, V1 } from '../lib/api'
 import { useApp } from '../lib/app-context'
-import type { HomeData } from '../lib/types'
+import type { HomeData, OnThisDay as Day } from '../lib/types'
+import { countryName, flag } from '../lib/countries'
 import { PLACE_ICONS, WX_ICON } from '../lib/types'
-import { daysBetween, fmtClock, fmtDate, fmtKm, fmtRange, plural, todayISO, weekday } from '../lib/format'
+import { daysBetween, fmtClock, fmtDate, fmtRange, itineraryOrder, plural, todayISO, weekday } from '../lib/format'
 import { Card, Empty, Loading, PageHeader, useAsync } from '../components/ui'
 import { Money } from '../components/Money'
 import { MapView, type Marker } from '../components/Map'
@@ -11,21 +12,21 @@ import { TripCard } from './Trips'
 import { Icon } from '../components/icons'
 
 export default function Home() {
-  const { user, settings } = useApp()
+  const { user } = useApp()
   const navigate = useNavigate()
   const { data, error, loading } = useAsync(() => api.get<HomeData>(`${V1}/home`), [])
   if (loading && !data) return <Loading />
   if (error) return <div className="callout danger"><Icon name="alert" size={15} /><span>{error}</span></div>
   if (!data) return null
-  const { stats, current, next, upcoming, recent, today, journal, pins, hero_weather: wx } = data
-  const unit = settings?.distance_unit || 'km'
-  const hour = new Date().getHours()
+  const { current, next, upcoming, recent, today, journal, pins, hero_weather: wx } = data
+    const hour = new Date().getHours()
   const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
   const first = (user?.name || '').split(' ')[0] || 'traveller'
   const hero = current || next
   const until = next ? daysBetween(todayISO(), next.start_date) : 0
   const heroStyle = hero?.has_cover ? { backgroundImage: `url(${V1}/trips/${hero.id}/cover?v=${hero.updated_at})` } : { background: `linear-gradient(135deg, ${hero?.color || '#0284c7'} 0%, #0f172a 100%)` }
-  const markers: Marker[] = pins.map(p => ({ id: String(p.id), lat: p.lat, lng: p.lng, label: p.name, icon: p.status === 'completed' ? '✓' : p.status === 'active' ? '✈' : '🧳', kind: p.status === 'completed' ? 'visited' : p.status === 'planning' ? 'idea' : 'booked', popup: `<b>${esc(p.name)}</b><br>${fmtRange(p.start_date, p.end_date)}`, onClick: () => navigate(`/trips/${p.id}`) }))
+  const markers: Marker[] = pins.map(p => ({ id: p.stay_id ? `s${p.stay_id}` : `t${p.id}`, lat: p.lat, lng: p.lng, label: p.stay ? `${p.name} · ${p.stay}` : p.name, icon: p.stay ? '🛏' : p.status === 'completed' ? '✓' : p.status === 'active' ? '✈' : '🧳', kind: p.status === 'completed' ? 'visited' : p.status === 'planning' ? 'idea' : 'booked',
+    popup: p.stay ? `<b>${esc(p.name)}</b><br>🛏 ${esc(p.stay)}<br>${fmtRange(p.stay_from || p.start_date, p.stay_to || p.end_date)}` : `<b>${esc(p.name)}</b><br>${fmtRange(p.start_date, p.end_date)}`, onClick: () => navigate(`/trips/${p.id}`) }))
   const c = next?.counts
   return (
     <>
@@ -46,15 +47,13 @@ export default function Home() {
             </div>
           </div>
         </div>
-      ) : (
-        <Card className="mb"><Empty icon="luggage" title="No trip on the horizon">Create one and start dropping in ideas — or import your collections from AdventureLog under Settings → Import.</Empty></Card>
-      )}
+      ) : null}
 
       {current && today && (
         <div className="overview-grid mb">
           <Card title="Today" actions={<Link className="btn ghost sm" to={`/trips/${current.id}/itinerary`}>Full day</Link>}>
             {today.places.length === 0 ? <p className="muted">Nothing scheduled — a free day, or drag some ideas onto it.</p> : (
-              <div className="day-items">{today.places.map(p => <Link key={p.id} className="item" to={`/trips/${current.id}/itinerary`} style={{ color: 'inherit' }}><span className="time">{fmtClock(p.start_time)}</span><span className={`ico ${p.status === 'visited' ? 'visited' : ''}`}>{PLACE_ICONS[p.category] || '📍'}</span><span className="txt"><span className="title">{p.name}</span><span className="sub">{p.address || p.notes}</span></span></Link>)}</div>
+              <div className="day-items">{[...today.places].sort(itineraryOrder).map(p => <Link key={p.id} className="item" to={`/trips/${current.id}/itinerary`} style={{ color: 'inherit' }}><span className="time">{fmtClock(p.start_time)}</span><span className={`ico ${p.status === 'visited' ? 'visited' : ''}`}>{PLACE_ICONS[p.category] || '📍'}</span><span className="txt"><span className="title">{p.name}</span><span className="sub">{p.address || p.notes}</span></span></Link>)}</div>
             )}
             {today.stay && <p className="muted small mt-sm">Sleeping at <b>{today.stay.name}</b>{today.stay.check_out && <> · check-out {fmtDate(today.stay.check_out, false)}</>}</p>}
           </Card>
@@ -84,14 +83,7 @@ export default function Home() {
         </div>
       )}
 
-      <div className="stats">
-        <Link className="stat" to="/trips"><div className="n">{stats.trips}</div><div className="l">trips</div></Link>
-        <div className="stat"><div className="n">{stats.days}</div><div className="l">days away</div></div>
-        <div className="stat"><div className="n">{stats.visited}<span className="muted" style={{ fontSize: 14 }}> / {stats.places}</span></div><div className="l">places visited</div></div>
-        <div className="stat"><div className="n">{stats.destinations.length}</div><div className="l">destinations</div></div>
-        {data.recorded_km > 0 && <div className="stat"><div className="n">{fmtKm(data.recorded_km, unit)}</div><div className="l">recorded</div></div>}
-        {data.photos > 0 && <div className="stat"><div className="n">{data.photos.toLocaleString()}</div><div className="l">photos in Immich</div></div>}
-      </div>
+      {data.on_this_day?.length > 0 && <OnThisDay list={data.on_this_day} />}
 
       {pins.length > 0 && (
         <Card title="Where you've been — and where you're going" className="mb" flush>
@@ -114,6 +106,29 @@ export default function Home() {
             </div>
           ))}
         </Card>
+      </div>
+    </>
+  )
+}
+
+const ORD = (n: number) => n + (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th')
+
+/** Earlier years on today's date: the 3rd day of the London trip in 2025, and where you were. */
+function OnThisDay({ list }: { list: Day[] }) {
+  return (
+    <>
+      <h2 className="section-h">On this day</h2>
+      <div className="otd-grid mb">
+        {list.map(d => (
+          <Link key={`${d.trip_id}-${d.year}`} to={`/trips/${d.trip_id}/itinerary`} className="otd" style={{ '--c': d.color || 'var(--accent)' } as React.CSSProperties}>
+            <span className="otd-cover" style={d.has_cover ? { backgroundImage: `url(${V1}/trips/${d.trip_id}/cover?v=${d.updated_at})` } : undefined}><b>{d.years_ago}</b><small>{d.years_ago === 1 ? 'year ago' : 'years ago'}</small></span>
+            <span className="grow" style={{ minWidth: 0 }}>
+              <span className="block"><b>{ORD(d.day_number)} day</b> of {d.trip_name} <span className="muted">· {d.year}</span></span>
+              <span className="muted small block">{d.countries.map(c => `${flag(c)} ${countryName(c)}`).join(' · ')}{d.stay && <>{d.countries.length > 0 && ' · '}🛏 {d.stay}</>}</span>
+              {d.places.length > 0 && <span className="small block otd-places">{d.places.slice(0, 4).join(' · ')}{d.places.length > 4 && ` +${d.places.length - 4}`}</span>}
+            </span>
+          </Link>
+        ))}
       </div>
     </>
   )

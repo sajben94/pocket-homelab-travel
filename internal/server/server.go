@@ -59,6 +59,12 @@ type Server struct {
 
 	modesKick chan struct{} // a connection-mode report is due (modes.go)
 
+	// countries of coordinates (countries.go)
+	countryKick   chan struct{}
+	countryLookup func(ctx context.Context, lat, lng float64) (string, error) // tests replace Nominatim
+	nominatimMu   sync.Mutex
+	nominatimLast time.Time
+
 	// whether Pocket Movement is open to a person through Core (location.go)
 	mvMu   sync.Mutex
 	mvSeen map[string]movementSeen
@@ -78,7 +84,7 @@ func New(cfg *config.Config, st *store.Store, log *slog.Logger, webFS fs.FS) *Se
 		geo: geo.New(cfg.UserAgent, 25*time.Second), fx: fx.New(cfg.FXProvider, cfg.UserAgent, 8*time.Second), syncing: map[int64]bool{},
 		oidc:     &oidcProvider{issuerURL: cfg.OIDCIssuer},
 		core:     core.New(cfg.CoreURL, core.Options{DB: st.DB, TokenFile: cfg.DataDir + "/core.token", UserAgent: cfg.UserAgent}),
-		resolved: map[string]resolvedURL{}, modesKick: make(chan struct{}, 1), mvSeen: map[string]movementSeen{}}
+		resolved: map[string]resolvedURL{}, modesKick: make(chan struct{}, 1), countryKick: make(chan struct{}, 1), mvSeen: map[string]movementSeen{}}
 }
 
 // Bootstrap seeds the first admin (if configured), integration defaults and demo data.
@@ -123,6 +129,7 @@ func (s *Server) Bootstrap(ctx context.Context) error {
 	}
 	_ = s.store.PurgeSessions(ctx)
 	go s.janitor(ctx)
+	go s.countryLoop(ctx)
 	if s.core.Configured() {
 		go s.coreLoop(ctx)
 		go s.modesLoop(ctx)
@@ -224,7 +231,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "TRAVEL",
 		Publishes: []string{"travel.trip_created", "travel.trip_updated", "travel.expense_linked"},
 		Offers:    linkOffers,
-		Uses:      append(append(append([]core.Use{}, moneyUses...), movementUses...), core.InferenceUse()),
+		Uses:      append(append(append(append([]core.Use{}, moneyUses...), movementUses...), placesUses...), core.InferenceUse()),
 		Services:  serviceUses,
 	}
 	// Ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration.
@@ -277,15 +284,18 @@ func (s *Server) coreStatus() map[string]any {
 }
 
 // janitor syncs trip costs from Pocket Money for active trips every 30 minutes.
+// It also brings repeating bills up to date.
 func (s *Server) janitor(ctx context.Context) {
 	t := time.NewTicker(30 * time.Minute)
 	defer t.Stop()
+	s.repeatBills(ctx, store.Today())
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			s.autoSync(ctx)
+			s.repeatBills(ctx, store.Today())
 		}
 	}
 }
@@ -310,6 +320,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/metrics", s.handleMetrics)
 	}
 
+	// Nextcloud Cospend's public API, for MoneyBuster (cospend.go)
+	s.cospendRoutes(r)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", s.handleLogin)
 		r.Post("/auth/setup", s.handleSetup)
@@ -319,6 +332,8 @@ func (s *Server) Router() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
+			r.Use(s.kickCountriesOnWrite)
+			r.Use(withPeopleFromQuery)
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/auth/me", s.handleMe)
 			r.Put("/auth/me", s.handleUpdateMe)
@@ -336,6 +351,19 @@ func (s *Server) Router() http.Handler {
 			r.Get("/geo/wiki", s.handleGeoWiki)
 			r.Get("/geo/weather", s.handleGeoWeather)
 
+			r.Get("/search", s.handleSearch)
+			r.Get("/places/saved", s.handleSavedPlaces)
+			r.Get("/stats", s.handleStats)
+			r.Get("/countries", s.handleCountries)
+			r.Get("/people", s.handleListPeople)
+			r.Post("/people", s.handleCreatePerson)
+			r.Get("/people/{id}", s.handleGetPerson)
+			r.Put("/people/{id}", s.handleUpdatePerson)
+			r.Delete("/people/{id}", s.handleDeletePerson)
+			r.Post("/people/{id}/merge", s.handleMergePerson)
+			r.Get("/countries/{code}", s.handleCountry)
+			r.Put("/countries/{code}/note", s.handlePutCountryNote)
+			r.Post("/countries/detect", s.handleDetectCountries)
 			r.Get("/trips", s.handleListTrips)
 			r.Post("/trips", s.handleCreateTrip)
 			r.Route("/trips/{tripID}", func(r chi.Router) {
@@ -346,6 +374,10 @@ func (s *Server) Router() http.Handler {
 				r.Get("/overview", s.handleTripOverview)
 				r.Get("/activity", s.handleTripActivity)
 				r.Put("/members", s.handleTripMembers)
+				r.Get("/people", s.handleListTripPeople)
+				r.Post("/people", s.handleAddTripPerson)
+				r.Put("/people/{id}", s.handleUpdateTripPerson)
+				r.Delete("/people/{id}", s.handleDeleteTripPerson)
 				r.Post("/cover", s.handleTripCover)
 				r.Get("/cover", s.handleTripCoverImage)
 				r.Delete("/cover", s.handleTripCoverDelete)
@@ -384,6 +416,24 @@ func (s *Server) Router() http.Handler {
 				r.Put("/expenses/{id}", s.handleUpdateExpense)
 				r.Delete("/expenses/{id}", s.handleDeleteExpense)
 				r.Get("/budget", s.handleBudget)
+				r.Put("/budget/plan", s.handlePutBudgetPlan)
+				r.Get("/split", s.handleSplit)
+				r.Get("/split/share", s.handleGetShare)
+				r.Put("/split/share", s.handlePutShare)
+				r.Delete("/split/share", s.handleDeleteShare)
+				r.Post("/split/settle", s.handleSettle)
+				r.Get("/split/trash", s.handleTrash)
+				r.Delete("/split/trash", s.handleEmptyTrash)
+				r.Post("/expenses/{id}/restore", s.handleRestoreExpense)
+				r.Post("/split/categories", s.handleSaveCategory)
+				r.Put("/split/categories/{id}", s.handleSaveCategory)
+				r.Delete("/split/categories/{id}", s.handleDeleteCategory)
+				r.Post("/split/payment-modes", s.handleSavePaymentMode)
+				r.Put("/split/payment-modes/{id}", s.handleSavePaymentMode)
+				r.Delete("/split/payment-modes/{id}", s.handleDeletePaymentMode)
+				r.Post("/split/currencies", s.handleSaveCurrency)
+				r.Put("/split/currencies/{id}", s.handleSaveCurrency)
+				r.Delete("/split/currencies/{id}", s.handleDeleteCurrency)
 				r.Post("/money/sync", s.handleMoneySync)
 				r.Post("/firefly/sync", s.handleMoneySync) // before v0.6.0
 
@@ -413,6 +463,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/dawarich/route", s.handleRoute)
 				r.Get("/dawarich/timeline", s.handleTimeline)
 				r.Get("/photos", s.handleTripPhotos)
+				r.Get("/pocket-places", s.handleTripPocketPlaces)
 				r.Get("/photos/{id}/thumb", s.handlePhotoThumb)
 				r.Post("/refresh", s.handleTripRefresh)
 
@@ -434,6 +485,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/import/adventurelog/collections", s.handleALCollections)
 			r.Post("/import/adventurelog", s.handleALImport)
 			r.Post("/import/trip", s.handleImportJSON)
+			r.Post("/import/cospend", s.handleCospendImport)
 
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users", s.handleCreateUser)

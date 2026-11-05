@@ -3,7 +3,7 @@ import { api, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { Place } from '../../lib/types'
 import { LODGING_ICONS, PLACE_ICONS, TRANSPORT_ICONS, WX_ICON } from '../../lib/types'
-import { dateRange, fmtClock, fmtDate, fmtDateTime, fmtDuration, fmtKm, todayISO, weekday } from '../../lib/format'
+import { dateRange, fmtClock, fmtDate, fmtDateTime, fmtDuration, fmtKm, itineraryOrder, placeWhen, stayTime, todayISO, weekday } from '../../lib/format'
 import { Card, Empty, useToast } from '../../components/ui'
 import { Icon } from '../../components/icons'
 import { useTrip } from './ctx'
@@ -27,11 +27,11 @@ export function Itinerary() {
   const ideas = ov.places.filter(p => !p.day_date)
   const rowsFor = (d: string): Row[] => {
     const rows: Row[] = []
-    for (const p of ov.places) if (p.day_date === d) rows.push({ key: `p${p.id}`, when: p.start_time || '99:' + String(p.sort_order).padStart(3, '0'), kind: 'place', icon: PLACE_ICONS[p.category] || '📍', title: p.name, sub: [p.duration_min ? fmtDuration(p.duration_min) : '', placeSub(p)].filter(Boolean).join(' · '), place: p, onClick: () => edit('place', p) })
+    for (const p of ov.places) if (p.day_date === d) rows.push({ key: `p${p.id}`, when: placeWhen(p), kind: 'place', icon: PLACE_ICONS[p.category] || '📍', title: p.name, sub: [p.duration_min ? fmtDuration(p.duration_min) : '', placeSub(p)].filter(Boolean).join(' · '), place: p, onClick: () => edit('place', p) })
     for (const t of ov.transport) if (t.depart_at.slice(0, 10) === d) rows.push({ key: `t${t.id}`, when: t.depart_at.slice(11, 16) || '00:00', kind: 'transport', icon: TRANSPORT_ICONS[t.type] || '➡️', title: t.name || `${t.from_name} → ${t.to_name}`, sub: [t.arrive_at && `arrives ${fmtDateTime(t.arrive_at, false)}`, transportSub(t)].filter(Boolean).join(' · '), onClick: () => edit('transport', t), cls: 'transport' })
     for (const l of ov.lodging) {
-      if (l.check_in.slice(0, 10) === d) rows.push({ key: `li${l.id}`, when: '15:00', kind: 'lodging-in', icon: LODGING_ICONS[l.type] || '🛏', title: `Check in · ${l.name}`, sub: lodgingSub(l), onClick: () => edit('lodging', l), cls: 'lodging' })
-      if (l.check_out.slice(0, 10) === d) rows.push({ key: `lo${l.id}`, when: '10:00', kind: 'lodging-out', icon: '🧳', title: `Check out · ${l.name}`, sub: l.address, onClick: () => edit('lodging', l), cls: 'lodging' })
+      if (l.check_in.slice(0, 10) === d) rows.push({ key: `li${l.id}`, when: stayTime(l.check_in, 'in', settings), kind: 'lodging-in', icon: LODGING_ICONS[l.type] || '🛏', title: `Check in · ${l.name}`, sub: lodgingSub(l), onClick: () => edit('lodging', l), cls: 'lodging' })
+      if (l.check_out.slice(0, 10) === d) rows.push({ key: `lo${l.id}`, when: stayTime(l.check_out, 'out', settings), kind: 'lodging-out', icon: '🧳', title: `Check out · ${l.name}`, sub: l.address, onClick: () => edit('lodging', l), cls: 'lodging' })
     }
     if (showRecorded) {
       const tl = timeline.find(x => x.date === d)
@@ -46,7 +46,7 @@ export function Itinerary() {
   }
   const drop = async (day: string, beforeKey?: string) => {
     if (dragId == null) return
-    const current = ov.places.filter(p => p.day_date === day && p.id !== dragId).sort((a, b) => a.sort_order - b.sort_order).map(p => p.id)
+    const current = ov.places.filter(p => p.day_date === day && p.id !== dragId).sort(itineraryOrder).map(p => p.id)
     const idx = beforeKey ? current.indexOf(Number(beforeKey.slice(1))) : -1
     if (idx >= 0) current.splice(idx, 0, dragId); else current.push(dragId)
     setDragId(null); setOver(null)

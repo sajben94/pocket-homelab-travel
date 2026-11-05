@@ -11,3 +11,4 @@ web/dist/*
 .DS_Store
 *.log
 /tmp/
+/data-demo/

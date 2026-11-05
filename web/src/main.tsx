@@ -1,6 +1,8 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { polyfillCountryFlagEmojis } from 'country-flag-emoji-polyfill'
+import flagFont from './assets/TwemojiCountryFlags.woff2?url'
 import './styles/base.css'
 import './styles/travel.css'
 import './styles/app.css'
@@ -10,8 +12,17 @@ import { Loading, ToastProvider } from './components/ui'
 import Layout from './components/Layout'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import Login from './pages/Login'
+
+// Windows has no flag emoji (🇮🇹 shows as "IT"): there, and only there, load a
+// small flags-only font served from this box. --font lists it first.
+polyfillCountryFlagEmojis('Twemoji Country Flags', flagFont)
 import Home from './pages/Home'
 import Trips from './pages/Trips'
+import Stats from './pages/Stats'
+import CountriesPage from './pages/Countries'
+import CountryPage from './pages/Country'
+import PeoplePage from './pages/People'
+import PersonPage from './pages/Person'
 import TripPage from './pages/Trip'
 import Settings from './pages/Settings'
 
@@ -33,6 +44,11 @@ function App() {
       <Route element={<Gate><ErrorBoundary where="travel"><Layout /></ErrorBoundary></Gate>}>
         <Route path="/" element={<Home />} />
         <Route path="/trips" element={<Trips />} />
+        <Route path="/insights" element={<Stats />} />
+        <Route path="/countries" element={<CountriesPage />} />
+        <Route path="/countries/:code" element={<CountryPage />} />
+        <Route path="/people" element={<PeoplePage />} />
+        <Route path="/people/:id" element={<PersonPage />} />
         <Route path="/trips/:id" element={<TripPage />} />
         <Route path="/trips/:id/:tab" element={<TripPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

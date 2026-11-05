@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
-import L from 'leaflet'
+import L from '../lib/leaflet'
+import 'leaflet.markercluster'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet.markercluster/dist/MarkerCluster.css'
 import { useApp } from '../lib/app-context'
 
 export interface Marker { id: string; lat: number; lng: number; label: string; icon?: string; kind?: string; number?: number; popup?: string; onClick?: () => void }
@@ -24,8 +26,19 @@ function pinIcon(m: Marker): L.DivIcon {
   return L.divIcon({ className: '', html: `<div class="${cls}"><span>${inner}</span></div>`, iconSize: [28, 28], iconAnchor: m.number != null ? [12, 12] : [6, 26], popupAnchor: m.number != null ? [0, -10] : [8, -24] })
 }
 
-/** A Leaflet map with pins and lines; fits to content unless a center is given. */
-export function MapView({ markers, lines = [], className = '', center, zoom, onClick, fitKey }: { markers: Marker[]; lines?: Line[]; className?: string; center?: [number, number]; zoom?: number; onClick?: (lat: number, lng: number) => void; fitKey?: string }) {
+// A bubble with how many pins are hidden in it; its colour follows the pins inside.
+function clusterIcon(c: L.MarkerCluster): L.DivIcon {
+  const n = c.getChildCount()
+  const kinds = new Set(c.getAllChildMarkers().map(m => (m.options as { kind?: string }).kind || ''))
+  const kind = kinds.size === 1 ? [...kinds][0] : 'mixed'
+  const size = n < 10 ? 34 : n < 100 ? 40 : 46
+  return L.divIcon({ className: '', html: `<div class="cluster ${kind}"><span>${n}</span></div>`, iconSize: [size, size] })
+}
+
+/** A Leaflet map with pins and lines; fits to content unless a center is given.
+ * Pins close together are grouped into a numbered bubble (click to zoom in);
+ * pins on exactly the same spot fan out around it with a line to where they are. */
+export function MapView({ markers, lines = [], className = '', center, zoom, onClick, fitKey, cluster = true }: { markers: Marker[]; lines?: Line[]; className?: string; center?: [number, number]; zoom?: number; onClick?: (lat: number, lng: number) => void; fitKey?: string; cluster?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const map = useRef<L.Map | null>(null)
   const layer = useRef<L.LayerGroup | null>(null)
@@ -62,8 +75,12 @@ export function MapView({ markers, lines = [], className = '', center, zoom, onC
       if (ln.tooltip) pl.bindTooltip(ln.tooltip, { sticky: true })
       if (!ln.noFit) bounds.push(...ln.points)
     }
+    const pins: L.LayerGroup = cluster && markers.length > 1
+      ? L.markerClusterGroup({ iconCreateFunction: clusterIcon, maxClusterRadius: 40, spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: true, spiderLegPolylineOptions: { weight: 1.5, color: '#475569', opacity: .8 } })
+      : L.layerGroup()
+    pins.addTo(g)
     for (const mk of markers) {
-      const marker = L.marker([mk.lat, mk.lng], { icon: pinIcon(mk), title: mk.label }).addTo(g)
+      const marker = L.marker([mk.lat, mk.lng], { icon: pinIcon(mk), title: mk.label, kind: mk.number != null ? 'num' : mk.kind || '' } as L.MarkerOptions).addTo(pins)
       if (mk.popup) marker.bindPopup(mk.popup)
       if (mk.onClick) marker.on('click', mk.onClick)
       bounds.push([mk.lat, mk.lng])
@@ -75,7 +92,7 @@ export function MapView({ markers, lines = [], className = '', center, zoom, onC
       else m.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 15 })
     } else if (!bounds.length && center) m.setView(center, zoom || 10)
     setTimeout(() => m.invalidateSize(), 50)
-  }, [markers, lines, center, zoom, fitKey])
+  }, [markers, lines, center, zoom, fitKey, cluster])
   useEffect(() => { const t = setTimeout(() => map.current?.invalidateSize(), 200); return () => clearTimeout(t) })
   return <div ref={ref} className={`map ${className}`} />
 }

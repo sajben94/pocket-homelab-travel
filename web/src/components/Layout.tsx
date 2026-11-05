@@ -12,6 +12,7 @@ import { ShortcutsSheet } from './ShortcutsSheet'
 import { Avatar, type Anchor, Menu, type MenuItem, MenuButton, modalOpen, rectOf, useIsMobile, useMediaQuery } from './ui'
 import { TripModal } from '../pages/trip/TripSettings'
 import { AskButton } from './AskButton'
+import { WithBanner, WithPicker } from './WithPeople'
 
 const SIDEBAR_KEY = 'pt-sidebar'
 
@@ -19,7 +20,7 @@ const SIDEBAR_KEY = 'pt-sidebar'
 export type AddKind = 'trip' | 'place' | 'expense' | 'lodging' | 'transport' | 'journal'
 
 export default function Layout() {
-  const { trips, reloadTrips } = useApp()
+  const { trips, reloadTrips, withPeople } = useApp()
   const navigate = useNavigate()
   const loc = useLocation()
   const mobile = useIsMobile()
@@ -112,7 +113,7 @@ export default function Layout() {
       </div>
       <div className="main">
         <TopBar onMenu={toggleSidebar} onPalette={() => setPalette(true)} mobile={mobile} compact={narrow} sidebarOpen={sidebarOpen} trip={current} tripId={tm?.params.id} />
-        <main className="content"><div className="content-inner"><Outlet /></div></main>
+        <main className="content"><div className="content-inner"><WithBanner /><Outlet key={withPeople.join(',')} /></div></main>
       </div>
       {mobile && <button type="button" className="fab" aria-label="New" title="New" aria-haspopup="menu" aria-expanded={!!fabMenu} onClick={e => setFabMenu(fabMenu ? null : rectOf(e.currentTarget))}><Icon name="plus" size={26} strokeWidth={2.2} /></button>}
       {fabMenu && <Menu anchor={fabMenu} align="right" items={addItems(add, target)} onClose={() => setFabMenu(null)} width={230} />}
@@ -123,7 +124,7 @@ export default function Layout() {
   )
 }
 
-const SECTION: Record<string, string> = { '': 'Home', trips: 'Trips' }
+const SECTION: Record<string, string> = { '': 'Home', trips: 'Trips', insights: 'Insights', countries: 'Countries', people: 'People' }
 
 function TopBar({ onMenu, onPalette, mobile, compact, sidebarOpen, trip, tripId }: { onMenu: () => void; onPalette: () => void; mobile: boolean; compact: boolean; sidebarOpen: boolean; trip?: Trip; tripId?: string }) {
   const { user, themeMode, setThemeMode, status, setUser } = useApp()
@@ -160,6 +161,7 @@ function TopBar({ onMenu, onPalette, mobile, compact, sidebarOpen, trip, tripId 
         {tripId ? <><button type="button" className="crumb" onClick={() => navigate('/trips')}>Trips</button><Icon name="chevron-right" size={16} className="crumb-sep" /><span className="ellipsis">{tripName}</span></> : section}
       </h1>
       <span className="spacer" />
+      <WithPicker />
       <button type="button" className="btn ghost icon-only" onClick={onPalette} aria-label="Search" title="Search (⌘K or /)"><Icon name="search" size={18} /></button>
       <AskButton />
       <MenuButton label="Account" className="avatar-btn" align="right" width={220} items={avatarMenu}>
