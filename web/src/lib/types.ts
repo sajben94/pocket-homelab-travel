@@ -75,7 +75,7 @@ export interface Overview {
   split: SplitInfo | null
   day_costs: DayCost[]
   budget_plan: PlanLine[]
-  integrations: { firefly: { configured: boolean; via: '' | 'core' | 'direct'; tag: string; synced_at: string }; dawarich: { configured: boolean; enabled: boolean; source?: LocationSource }; immich: { configured: boolean; enabled: boolean; url: string }; ai: { configured: boolean; model: string } }
+  integrations: { firefly: { configured: boolean; via: '' | 'core' | 'direct'; tag: string; synced_at: string }; dawarich: { configured: boolean; enabled: boolean; source?: LocationSource }; immich: { configured: boolean; enabled: boolean; url: string }; photoprism?: { configured: boolean; url: string }; ai: { configured: boolean; model: string } }
 }
 export interface DayWeather { date: string; code: number; label: string; tmax: number; tmin: number; precip_mm: number; wind_kmh: number; sunrise?: string; sunset?: string; source: 'forecast' | 'archive' }
 export interface RouteDay { date: string; km: number; segments: [number, number][][]; start?: string; end?: string; countries?: string[] }
@@ -83,7 +83,10 @@ export interface Route { points: [number, number, number][]; raw_count: number; 
 export const DAY_COLORS = ['#0ea5e9', '#f97316', '#22c55e', '#a855f7', '#ef4444', '#eab308', '#14b8a6', '#ec4899', '#6366f1', '#84cc16', '#f43f5e', '#06b6d4', '#d946ef', '#10b981']
 export interface TimelineEntry { type: 'journey' | 'visit'; track_id?: number; visit_id?: number; name?: string; status?: string; started_at: string; ended_at: string; duration: number; distance: number; dominant_mode?: string; avg_speed?: number; elevation_gain?: number; latitude?: number; longitude?: number; point_count?: number }
 export interface TimelineDay { date: string; summary: { total_distance: number; distance_unit: string; places_visited: number; time_moving_minutes: number; time_stationary_minutes: number; mode_distances: Record<string, number> }; entries: TimelineEntry[] }
-export interface Photo { id: string; type: 'IMAGE' | 'VIDEO'; file_name: string; taken_at: string; lat: number | null; lng: number | null; city: string; country: string; thumbhash: string; favorite: boolean; duration?: string }
+/** A photo from the viewer's Immich or PhotoPrism. */
+export interface Photo { id: string; src: 'immich' | 'photoprism'; hash?: string; type: 'IMAGE' | 'VIDEO'; file_name: string; taken_at: string; lat: number | null; lng: number | null; city: string; country: string; thumbhash?: string; favorite: boolean; duration?: string; open?: string; hidden?: boolean }
+/** A stretch of days away from home found in the photos, not covered by a trip yet. */
+export interface PhotoTrip { start_date: string; end_date: string; days: number; photos: number; name: string; destination: string; countries: string[] | null; lat: number; lng: number; km_from_home: number; cover?: Photo }
 export interface GeoResult { name: string; display: string; lat: number; lng: number; type: string; category: string; country: string; city: string; website?: string; phone?: string; hours?: string; source: string; osm_id?: string; suggest?: string }
 export type ConnMode = 'core' | 'direct' | 'off'
 /** Where the recorded route comes from: Pocket Movement (through Pocket Core only) or Dawarich. */
@@ -104,6 +107,7 @@ export interface Settings {
   firefly_url: string; firefly_token: string; firefly_configured: boolean
   dawarich_url: string; dawarich_api_key: string; dawarich_configured: boolean
   immich_url: string; immich_public_url: string; immich_api_key: string; immich_configured: boolean
+  photoprism_url: string; photoprism_public_url: string; photoprism_token: string; photoprism_configured: boolean
   openai_api_key: string; openai_model: string; openai_base_url: string; openai_configured: boolean; ai_configured: boolean
   max_upload_bytes: number; setup_complete: boolean; can_edit_global?: boolean
 }

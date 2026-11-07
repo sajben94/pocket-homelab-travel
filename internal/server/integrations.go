@@ -10,7 +10,6 @@ import (
 
 	"encoding/json"
 	"fmt"
-	"github.com/go-chi/chi/v5"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,6 +26,7 @@ import (
 	"github.com/abjelosevic88/pocket-homelab-travel/internal/firefly"
 	"github.com/abjelosevic88/pocket-homelab-travel/internal/geo"
 	"github.com/abjelosevic88/pocket-homelab-travel/internal/immich"
+	"github.com/abjelosevic88/pocket-homelab-travel/internal/photoprism"
 	"github.com/abjelosevic88/pocket-homelab-travel/internal/store"
 )
 
@@ -66,6 +66,7 @@ func (s *Server) publicSettings(ctx context.Context, st store.Settings, u *store
 		"firefly_url": st.FireflyURL, "firefly_token": mask(st.FireflyToken), "firefly_configured": moneyVia != "",
 		"dawarich_url": st.DawarichURL, "dawarich_api_key": mask(st.DawarichAPIKey), "dawarich_configured": dwVia != "",
 		"immich_url": st.ImmichURL, "immich_public_url": st.ImmichPublicURL, "immich_api_key": mask(st.ImmichAPIKey), "immich_configured": imVia != "",
+		"photoprism_url": st.PhotoPrismURL, "photoprism_public_url": st.PhotoPrismPublicURL, "photoprism_token": mask(st.PhotoPrismToken), "photoprism_configured": st.PhotoPrismURL != "",
 		"openai_api_key": mask(st.OpenAIKey), "openai_model": st.OpenAIModel, "openai_base_url": st.OpenAIBaseURL, "openai_configured": st.OpenAIKey != "",
 		"max_upload_bytes": s.cfg.MaxUploadBytes, "setup_complete": st.SetupComplete, "can_edit_global": u != nil && u.Role == "admin",
 	}
@@ -189,6 +190,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		cur.ImmichURL = strings.TrimRight(strings.TrimSpace(in.ImmichURL), "/")
 	}
 	secret("immich_api_key", &cur.ImmichAPIKey, in.ImmichAPIKey)
+	if keys["photoprism_url"] {
+		cur.PhotoPrismURL = strings.TrimRight(strings.TrimSpace(in.PhotoPrismURL), "/")
+	}
+	secret("photoprism_token", &cur.PhotoPrismToken, in.PhotoPrismToken)
+	if keys["photoprism_public_url"] {
+		cur.PhotoPrismPublicURL = strings.TrimRight(strings.TrimSpace(in.PhotoPrismPublicURL), "/")
+	}
 	secret("openai_api_key", &cur.OpenAIKey, in.OpenAIKey)
 	if keys["ai_pocket_model"] {
 		if !validPocketModel(in.AIPocketModel) {
@@ -385,6 +393,14 @@ func (s *Server) handleIntegrationTest(w http.ResponseWriter, r *http.Request) {
 			v, err = c.Version(ctx)
 			msg = "Immich " + v + ", " + how
 		}
+	case "photoprism":
+		key := in.Key
+		if strings.Contains(key, "••") || key == "" {
+			key = st.PhotoPrismToken
+		}
+		var v string
+		v, err = photoprism.New(firstNonEmpty(strings.TrimSpace(in.URL), st.PhotoPrismURL), key, 15*time.Second).Version(ctx)
+		msg = "PhotoPrism " + v + ", direct connection"
 	default:
 		writeErr(w, http.StatusBadRequest, "unknown integration")
 		return
@@ -508,10 +524,12 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 				recordedKm += rr.DistanceKm
 			}
 		}
-		if v, _, ok := s.store.CacheGet(ctx, userCacheKey(trips[i].ID, u.ID, "immich-photos")); ok {
-			var ph []json.RawMessage
-			if json.Unmarshal([]byte(v), &ph) == nil {
-				photosN += len(ph)
+		for _, lib := range []string{"immich-photos", "photoprism-photos"} {
+			if v, _, ok := s.store.CacheGet(ctx, userCacheKey(trips[i].ID, u.ID, lib)); ok {
+				var ph []json.RawMessage
+				if json.Unmarshal([]byte(v), &ph) == nil {
+					photosN += len(ph)
+				}
 			}
 		}
 	}
@@ -1084,61 +1102,6 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_, _ = w.Write(b)
-}
-
-// ---- Immich ----
-
-func (s *Server) handleTripPhotos(w http.ResponseWriter, r *http.Request) {
-	t := tripFrom(r.Context()).trip
-	if !t.Immich {
-		writeJSON(w, http.StatusOK, []any{})
-		return
-	}
-	// the viewer's own Immich (a trip shared with them shows their photos)
-	im, _, err := s.immichFor(r.Context(), actorID(r.Context()))
-	if err != nil {
-		writeJSON(w, http.StatusOK, []any{})
-		return
-	}
-	b, err := s.cached(r, t, "immich-photos", func() (any, error) {
-		from, to, ok := tripWindow(t)
-		if !ok {
-			return []any{}, nil
-		}
-		a, err := im.Search(r.Context(), from, to, 5000)
-		if err != nil {
-			return nil, err
-		}
-		if a == nil {
-			a = []immich.Asset{}
-		}
-		return a, nil
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "immich: "+err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = w.Write(b)
-}
-
-func (s *Server) handlePhotoThumb(w http.ResponseWriter, r *http.Request) {
-	// the viewer's own Immich, resolved for every thumbnail (the key never
-	// reaches the browser, and a switch-off applies at once)
-	im, _, err := s.immichFor(r.Context(), actorID(r.Context()))
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "immich: "+err.Error())
-		return
-	}
-	id := strings.Map(func(c rune) rune {
-		if c == '-' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
-			return c
-		}
-		return -1
-	}, chi.URLParam(r, "id"))
-	if err := im.Thumbnail(r.Context(), w, id, r.URL.Query().Get("size")); err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-	}
 }
 
 // ---- exports ----

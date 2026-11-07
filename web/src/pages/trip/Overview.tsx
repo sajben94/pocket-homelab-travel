@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { api, V1 } from '../../lib/api'
+import { api, photoKey, photoThumb, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { Activity, Lodging, Place, Transport } from '../../lib/types'
 import { LODGING_ICONS, PLACE_ICONS, TRANSPORT_ICONS, WX_ICON } from '../../lib/types'
@@ -100,9 +100,9 @@ export function OverviewTab() {
           </>
         )}
       </Card>}
-      {(integ.immich.configured && trip.immich) && <Card title="Photos" actions={<button type="button" className="btn ghost sm" onClick={() => go('photos')}>All {photos.length ? photos.length : ''}</button>}>
-        {extErrors.immich ? <p className="bad small">{extErrors.immich}</p> : photos.length === 0 ? <p className="muted">No photos from Immich in this date range{!past && !running ? ' yet' : ''}.</p> : (
-          <div className="photo-grid sm">{photos.slice(0, 12).map(p => <a key={p.id} href={`${integ.immich.url}/photos/${p.id}`} target="_blank" rel="noreferrer"><img src={`${V1}/trips/${trip.id}/photos/${p.id}/thumb`} loading="lazy" alt="" />{p.type === 'VIDEO' && <span className="vid"><Icon name="play" size={10} /></span>}</a>)}</div>
+      {((integ.immich.configured || integ.photoprism?.configured) && trip.immich) && <Card title="Photos" actions={<button type="button" className="btn ghost sm" onClick={() => go('photos')}>All {photos.length ? photos.length : ''}</button>}>
+        {extErrors.immich ? <p className="bad small">{extErrors.immich}</p> : photos.length === 0 ? <p className="muted">No photos in this date range{!past && !running ? ' yet' : ''}.</p> : (
+          <div className="photo-grid sm">{photos.slice(0, 12).map(p => <a key={photoKey(p)} href={p.open || '#'} onClick={e => { e.preventDefault(); go('photos') }}><img src={photoThumb(p)} loading="lazy" alt="" />{p.type === 'VIDEO' && <span className="vid"><Icon name="play" size={10} /></span>}</a>)}</div>
         )}
       </Card>}
       {integ.ai.configured && (past || running) && <Card title={<><Icon name="sparkles" size={16} />Recap</>}>

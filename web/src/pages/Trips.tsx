@@ -11,6 +11,7 @@ import { Money } from '../components/Money'
 import { TripModal } from './trip/TripSettings'
 import { Icon } from '../components/icons'
 import { useApp } from '../lib/app-context'
+import { FoundTrips } from './FoundTrips'
 
 type Filter = 'all' | 'upcoming' | 'past' | 'archived'
 
@@ -42,6 +43,7 @@ export default function Trips() {
         <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'past', label: 'Past' }, { value: 'archived', label: 'Archived' }]} size="sm" label="Show" />
       </div>
       {q && dates && <div className="hint-strip">Trips in <b>{dates}</b>{result?.query.words?.length ? <> matching “{result.query.words.join(' ')}”</> : null}{busy && <span className="muted"> · searching…</span>}</div>}
+      {!q && (filter === 'all' || filter === 'past') && <FoundTrips onAdded={reload} />}
       {loading && !data ? <Loading /> : error ? <div className="callout danger">{error}</div> : list.length === 0 ? (
         <Empty icon="luggage" title={q ? 'No trips match' : filter === 'archived' ? 'Nothing archived' : 'No trips yet'}>{!q && filter !== 'archived' && 'Create your first trip, or import your collections from AdventureLog under Settings → Import.'}</Empty>
       ) : (

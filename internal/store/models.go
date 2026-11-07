@@ -331,6 +331,10 @@ type Settings struct {
 	ImmichURL       string `json:"immich_url"`
 	ImmichAPIKey    string `json:"immich_api_key"`
 	ImmichPublicURL string `json:"immich_public_url"` // what the browser opens; defaults to the API URL
+	// PhotoPrism (direct only): URL, app password, what the browser opens.
+	PhotoPrismURL       string `json:"photoprism_url"`
+	PhotoPrismToken     string `json:"photoprism_token"`
+	PhotoPrismPublicURL string `json:"photoprism_public_url"`
 	// Where trip routes, the timeline, distances and countries come from:
 	// movement (Pocket Movement, through Pocket Core only) | dawarich; "" =
 	// Pocket Movement while Travel is connected to Core and the link is on,

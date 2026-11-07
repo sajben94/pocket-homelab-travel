@@ -35,7 +35,7 @@ export function TripSettings() {
           <dt>Currency</dt><dd>{trip.currency}</dd>
           <dt>Money tag</dt><dd>{trip.firefly_tag || <span className="muted">none</span>}</dd>
           <dt>Recorded route</dt><dd>{trip.dawarich ? 'route and timeline on (Pocket Movement or Dawarich, Settings → Integrations)' : 'off'}</dd>
-          <dt>Immich</dt><dd>{trip.immich ? 'photos on' : 'off'}</dd>
+          <dt>Photos</dt><dd>{trip.immich ? 'photos on' : 'off'}</dd>
           <dt>Timezone</dt><dd>{trip.timezone || <span className="muted">server default</span>}</dd>
           {trip.external_id && <><dt>Imported from</dt><dd className="mono small">{trip.external_id}</dd></>}
         </dl>
@@ -132,7 +132,7 @@ export function TripModal({ trip, detected = [], onClose, onSaved }: { trip?: Tr
             {tagOpts.length > 0 ? <Select value={f.firefly_tag || ''} onChange={v => set('firefly_tag', v)} options={tagOpts} placeholder="No tag" clearLabel="No tag" onCreate={v => v} createLabel="Use tag" /> : <input value={f.firefly_tag || ''} onChange={e => set('firefly_tag', e.target.value)} placeholder="lustica 2026" />}
           </Field>}
           <label className="row"><input type="checkbox" checked={f.dawarich !== false} onChange={e => set('dawarich', e.target.checked)} style={{ width: 'auto' }} /> Show the recorded route and timeline (Pocket Movement or Dawarich)</label>
-          <label className="row"><input type="checkbox" checked={f.immich !== false} onChange={e => set('immich', e.target.checked)} style={{ width: 'auto' }} /> Show photos from Immich</label>
+          <label className="row"><input type="checkbox" checked={f.immich !== false} onChange={e => set('immich', e.target.checked)} style={{ width: 'auto' }} /> Show photos from Immich / PhotoPrism</label>
           <Field label="Link"><input type="url" value={f.link || ''} onChange={e => set('link', e.target.value)} placeholder="https://" /></Field>
           <Field label="Notes"><textarea value={f.notes || ''} onChange={e => set('notes', e.target.value)} rows={4} placeholder="Anything that doesn't fit elsewhere: emergency numbers, the Wi-Fi password, who's allergic to what." /></Field>
         </>}

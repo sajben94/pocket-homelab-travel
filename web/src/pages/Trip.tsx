@@ -38,7 +38,9 @@ export default function TripPage() {
   const [weather, setWeather] = useState<DayWeather[]>([])
   const [route, setRoute] = useState<Route | null>(null)
   const [timeline, setTimeline] = useState<TimelineDay[]>([])
-  const [photos, setPhotos] = useState<Photo[]>([])
+  const [allPhotos, setAllPhotos] = useState<Photo[]>([])
+  const [photosReady, setPhotosReady] = useState(false)
+  const photos = useMemo(() => allPhotos.filter(p => !p.hidden), [allPhotos])
   const [extErrors, setExtErrors] = useState<Record<string, string>>({})
   const [editing, setEditing] = useState<{ kind: EditKind; item?: unknown; defaults?: Record<string, unknown> } | null>(null)
   const base = `${V1}/trips/${id}`
@@ -55,7 +57,13 @@ export default function TripPage() {
       api.get<DayWeather[]>(`${base}/weather${q}`).then(setWeather).catch(e => { errs.weather = (e as Error).message }),
       api.get<Route>(`${base}/location/route${q}`).then(setRoute).catch(e => { errs.dawarich = (e as Error).message }),
       api.get<TimelineDay[]>(`${base}/location/timeline${q}`).then(setTimeline).catch(e => { errs.dawarich = (e as Error).message }),
-      api.get<Photo[]>(`${base}/photos${q}`).then(setPhotos).catch(e => { errs.immich = (e as Error).message }),
+      // Immich and PhotoPrism; one library failing while the other answers comes in X-Photos-Error
+      fetch(`${base}/photos${q}`, { credentials: 'same-origin' }).then(async res => {
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
+        const partial = res.headers.get('X-Photos-Error')
+        if (partial) errs.photos_partial = partial
+        setAllPhotos(await res.json())
+      }).catch(e => { errs.immich = (e as Error).message }).finally(() => setPhotosReady(true)),
     ])
     setExtErrors(errs)
   }, [base])
@@ -71,8 +79,8 @@ export default function TripPage() {
 
   const state = useMemo(() => ov ? ({
     ov, trip: ov.trip, canEdit: ov.trip.role !== 'viewer', isOwner: ov.trip.role === 'owner',
-    reload, patch, weather, route, timeline, photos, extErrors, refreshExternal, edit, go,
-  }) : null, [ov, reload, patch, weather, route, timeline, photos, extErrors, refreshExternal, edit, go])
+    reload, patch, weather, route, timeline, photos, allPhotos, setAllPhotos, photosReady, extErrors, refreshExternal, edit, go,
+  }) : null, [ov, reload, patch, weather, route, timeline, photos, allPhotos, photosReady, extErrors, refreshExternal, edit, go])
 
   // ?add=place|expense|lodging|transport|journal (the New menu, shortcuts, links) opens that form on this trip
   const addKind = params.get('add') as EditKind | null

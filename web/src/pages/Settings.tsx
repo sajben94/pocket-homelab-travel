@@ -171,7 +171,7 @@ function Integrations() {
   const { f, setF, save, busy } = useSettingsForm()
   const [test, setTest] = useState<Record<string, string>>({})
   if (!f) return <Loading />
-  const run = async (which: 'money' | 'movement' | 'dawarich' | 'places' | 'immich' | 'openai', url: string, key: string) => {
+  const run = async (which: 'money' | 'movement' | 'dawarich' | 'places' | 'immich' | 'photoprism' | 'openai', url: string, key: string) => {
     setTest(t => ({ ...t, [which]: 'testing…' }))
     try { const r = await api.post<{ ok: boolean; message?: string; error?: string }>(`${V1}/integrations/test`, { which, url, key }); setTest(t => ({ ...t, [which]: r.ok ? `✓ ${r.message}` : `✕ ${r.error}` })) } catch (e) { setTest(t => ({ ...t, [which]: `✕ ${(e as Error).message}` })) }
   }
@@ -198,7 +198,7 @@ function Integrations() {
   )
   return (
     <div className="stack loose">
-      <div className="callout info"><Icon name="info" size={15} /><span>These are your own accounts. Each person connects their own Pocket Money, Pocket Movement or Dawarich, Pocket Places, Immich and OpenAI (through Pocket Core, with your own key there, or directly); nobody else on this box uses yours. On a trip shared with you, the route and photos come from your accounts and the spending from the trip owner's Pocket Money.</span></div>
+      <div className="callout info"><Icon name="info" size={15} /><span>These are your own accounts. Each person connects their own Pocket Money, Pocket Movement or Dawarich, Pocket Places, Immich or PhotoPrism and OpenAI (through Pocket Core, with your own key there, or directly); nobody else on this box uses yours. On a trip shared with you, the route and photos come from your accounts and the spending from the trip owner's Pocket Money.</span></div>
       <Section title="Pocket Money" icon="wallet" actions={connBadge(shownMode(f.money_mode, f.core_ready), f.money_via)} sub={<>What the trip really cost. Tag the expenses in Pocket Money (e.g. "lisbon 2027") and set the same Money tag on the trip; they appear as spent, in their own currency, converted at the day's rate. Synced every 30 minutes while a trip is running or upcoming, and on demand.</>}>
         <Connection app="Pocket Money" mode={f.money_mode} via={f.money_via} detail={f.money_detail} core={f.core_ready} hasToken={!!f.firefly_token}
           onMode={m => save({ money_mode: m })} onDisconnect={() => save({ firefly_url: '', firefly_token: '' })}
@@ -216,6 +216,22 @@ function Integrations() {
           test={<><button type="button" className="btn sm" onClick={() => run('places', '', '')}>Test Pocket Places</button>{status('places')}</>} direct={null} />
       </Section>
       {block('immich', 'Immich', 'camera', 'Immich', 'immich_url', 'immich_api_key', 'Every photo and video taken between the trip dates, grouped by day; the geotagged ones land on the map. Thumbnails are proxied so the browser never sees the key.', 'Immich → Account settings → API keys.')}
+      <Section title="PhotoPrism" icon="camera" actions={<span className={`badge ${f.photoprism_configured ? 'ok' : ''}`}>{f.photoprism_configured ? 'connected' : 'not set'}</span>}
+        sub="Like Immich: every photo and video taken between the trip dates in the trip's Photos tab, the geotagged ones on the map, and trips found in where and when you took photos. Use one or both. Thumbnails are proxied so the browser never sees the password.">
+        <div className="grid" style={{ gap: 12 }}>
+          <div className="two-col tight">
+            <Field label="URL" help="Inside Docker e.g. http://host.docker.internal:2342"><input value={f.photoprism_url} onChange={e => setF({ ...f, photoprism_url: e.target.value })} placeholder="http://host.docker.internal:2342" /></Field>
+            <Field label="App password" help="PhotoPrism → Settings → Account → Apps and Devices → Add (scope: all or photos). Leave empty if PhotoPrism runs without login. Stored on the server; shown masked."><input value={f.photoprism_token} onChange={e => setF({ ...f, photoprism_token: e.target.value })} autoComplete="off" /></Field>
+          </div>
+          <Field label="Public URL (optional)" help="What the browser opens for “Open in PhotoPrism” when the URL above is internal."><input value={f.photoprism_public_url} onChange={e => setF({ ...f, photoprism_public_url: e.target.value })} placeholder="https://photoprism.example.com" /></Field>
+          <div className="row wrap">
+            <button type="button" className="btn sm primary" disabled={busy} onClick={() => save({ photoprism_url: f.photoprism_url, photoprism_token: f.photoprism_token, photoprism_public_url: f.photoprism_public_url })}>Save</button>
+            <button type="button" className="btn sm" onClick={() => run('photoprism', f.photoprism_url, f.photoprism_token)} disabled={!f.photoprism_url}>Test connection</button>{status('photoprism')}
+            <span className="spacer" />
+            {f.photoprism_configured && <button type="button" className="btn ghost sm danger-ghost" onClick={() => save({ photoprism_url: '', photoprism_token: '', photoprism_public_url: '' })}>Disconnect</button>}
+          </div>
+        </div>
+      </Section>
       <Section title="AI provider" icon="sparkles" actions={<span className={`badge ${f.ai_configured ? 'ok' : ''}`}>{f.ai_configured ? 'connected' : 'not set'}</span>}
         sub={<>Optional. Adds five buttons: <b>Suggest places</b> (popular, well-rated places for the destination, located with OpenStreetMap), <b>Plan my days</b> (assigns ideas to days and times), <b>Describe</b> a place with practical tips, a <b>packing list</b> tailored to the trip and weather, and a <b>recap</b> written from your journal, visited places and spending. Trip details are sent to the provider when you use them; nothing runs automatically.</>}>
         <div className="grid" style={{ gap: 12 }}>

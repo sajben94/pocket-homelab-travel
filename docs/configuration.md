@@ -24,6 +24,9 @@ Everything is an environment variable with a sensible default. Data is per perso
 | `DAWARICH_URL` / `DAWARICH_API_KEY` | | Dawarich base URL + API key |
 | `IMMICH_URL` / `IMMICH_API_KEY` | | Immich base URL + API key |
 | `IMMICH_PUBLIC_URL` | | Browser-facing Immich URL for "Open in Immich" links when `IMMICH_URL` is internal |
+| `PHOTOPRISM_URL` | | PhotoPrism base URL for the owner (Direct only; each person can set their own under Settings → Integrations) |
+| `PHOTOPRISM_TOKEN` | | PhotoPrism app password (Settings → Account → Apps and Devices); empty when PhotoPrism runs without login |
+| `PHOTOPRISM_PUBLIC_URL` | | Browser-facing PhotoPrism URL for "Open in PhotoPrism" links |
 | `OPENAI_API_KEY` | | Enables the AI features (suggest places, plan days, describe, packing list, recap) |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Any chat model of the provider |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter…) |

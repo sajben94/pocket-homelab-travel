@@ -99,6 +99,12 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.ImmichAPIKey = v
 		case "immich_public_url":
 			st.ImmichPublicURL = v
+		case "photoprism_url":
+			st.PhotoPrismURL = v
+		case "photoprism_token":
+			st.PhotoPrismToken = v
+		case "photoprism_public_url":
+			st.PhotoPrismPublicURL = v
 		case "location_source":
 			st.LocationSource = v
 		case "places_mode":
@@ -137,23 +143,26 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 func personalKV(st Settings) map[string]string {
 	b := map[bool]string{true: "1", false: "0"}
 	return map[string]string{
-		"home_currency":     st.HomeCurrency,
-		"date_format":       st.DateFormat,
-		"time_format":       st.TimeFormat,
-		"distance_unit":     st.DistanceUnit,
-		"money_mode":        st.MoneyMode,
-		"firefly_url":       st.FireflyURL,
-		"firefly_token":     st.FireflyToken,
-		"dawarich_mode":     st.DawarichMode,
-		"immich_mode":       st.ImmichMode,
-		"dawarich_url":      st.DawarichURL,
-		"dawarich_api_key":  st.DawarichAPIKey,
-		"immich_url":        st.ImmichURL,
-		"immich_api_key":    st.ImmichAPIKey,
-		"immich_public_url": st.ImmichPublicURL,
-		"location_source":   st.LocationSource,
-		"places_mode":       st.PlacesMode,
-		"ai_provider":       st.AIProvider, "ai_pocket_model": st.AIPocketModel,
+		"home_currency":         st.HomeCurrency,
+		"date_format":           st.DateFormat,
+		"time_format":           st.TimeFormat,
+		"distance_unit":         st.DistanceUnit,
+		"money_mode":            st.MoneyMode,
+		"firefly_url":           st.FireflyURL,
+		"firefly_token":         st.FireflyToken,
+		"dawarich_mode":         st.DawarichMode,
+		"immich_mode":           st.ImmichMode,
+		"dawarich_url":          st.DawarichURL,
+		"dawarich_api_key":      st.DawarichAPIKey,
+		"immich_url":            st.ImmichURL,
+		"immich_api_key":        st.ImmichAPIKey,
+		"immich_public_url":     st.ImmichPublicURL,
+		"photoprism_url":        st.PhotoPrismURL,
+		"photoprism_token":      st.PhotoPrismToken,
+		"photoprism_public_url": st.PhotoPrismPublicURL,
+		"location_source":       st.LocationSource,
+		"places_mode":           st.PlacesMode,
+		"ai_provider":           st.AIProvider, "ai_pocket_model": st.AIPocketModel,
 		"openai_api_key":  st.OpenAIKey,
 		"openai_model":    st.OpenAIModel,
 		"openai_base_url": st.OpenAIBaseURL,

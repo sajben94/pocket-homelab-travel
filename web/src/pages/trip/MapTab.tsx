@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { api, V1 } from '../../lib/api'
+import { api, photoKey, photoThumb, V1 } from '../../lib/api'
 import { useApp } from '../../lib/app-context'
 import type { GeoResult } from '../../lib/types'
 import { DAY_COLORS, LODGING_ICONS, PLACE_ICONS } from '../../lib/types'
@@ -31,7 +31,7 @@ export function MapTab() {
     }
     if (layers.lodging) ov.lodging.filter(l => l.lat != null).forEach(l => out.push({ id: `l${l.id}`, lat: l.lat!, lng: l.lng!, label: l.name, icon: LODGING_ICONS[l.type] || '🛏', kind: 'lodging', popup: `<b>${esc(l.name)}</b><br>${fmtDate(l.check_in, false)} – ${fmtDate(l.check_out, false)}`, onClick: () => edit('lodging', l) }))
     if (layers.visits) for (const d of timeline) for (const e of d.entries) if (day === 'all' || d.date === day) if (e.type === 'visit' && e.latitude != null && e.longitude != null) out.push({ id: `v${e.visit_id}`, lat: e.latitude, lng: e.longitude, label: e.name || 'stop', icon: '📌', kind: 'visit', popup: `<b>${esc(e.name || 'Stop')}</b><br>${fmtDate(d.date, false)} · ${Math.round(e.duration / 60)} min` })
-    if (layers.photos) photos.filter(p => p.lat != null && (day === 'all' || p.taken_at.slice(0, 10) === day)).forEach(p => out.push({ id: `ph${p.id}`, lat: p.lat!, lng: p.lng!, label: p.file_name, icon: '📷', kind: 'photo', popup: `<img src="${V1}/trips/${trip.id}/photos/${p.id}/thumb" style="width:160px;border-radius:6px"><br>${fmtDate(p.taken_at.slice(0, 10), false)}` }))
+    if (layers.photos) photos.filter(p => p.lat != null && (day === 'all' || p.taken_at.slice(0, 10) === day)).forEach(p => out.push({ id: `ph${photoKey(p)}`, lat: p.lat!, lng: p.lng!, label: p.file_name, icon: '📷', kind: 'photo', popup: `<img src="${photoThumb(p)}" style="width:160px;border-radius:6px"><br>${fmtDate(p.taken_at.slice(0, 10), false)}` }))
     discover.results.forEach((r, i) => out.push({ id: `d${i}`, lat: r.lat, lng: r.lng, label: r.name, icon: '✚', kind: 'idea', popup: `<b>${esc(r.name)}</b><br>${esc(r.type || '')}${r.hours ? '<br>' + esc(r.hours) : ''}`, onClick: () => canEdit && edit('place', null, { name: r.name, category: discover.cat === 'historic' ? 'sight' : discover.cat === 'lodging' ? 'other' : discover.cat, lat: r.lat, lng: r.lng, link: r.website || '', phone: r.phone || '', address: r.display.replace(/^[\d.]+ km( · )?/, '') }) }))
     return out
   }, [ov, layers, timeline, photos, discover.results, discover.cat, trip.id, canEdit, edit, day])

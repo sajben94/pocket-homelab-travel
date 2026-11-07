@@ -117,6 +117,7 @@ Everything is an environment variable with a sensible default. The important one
 | `FIREFLY_URL` / `FIREFLY_TOKEN` | – | Direct Pocket Money connection for the owner: `<money>/firefly` + a Money API token, or a Firefly III URL + personal access token. Copied into the owner's settings once; cleared in the UI, it stays cleared. |
 | `DAWARICH_URL` / `DAWARICH_API_KEY` | – | Dawarich base URL + API key for the owner (Direct). Without them, on a box with Pocket Core, each person's Dawarich comes from Core. |
 | `IMMICH_URL` / `IMMICH_API_KEY` | – | Immich base URL + API key for the owner (Direct; `IMMICH_PUBLIC_URL` for browser links when the API URL is internal). Without them, on a box with Pocket Core, each person's Immich comes from Core. |
+| `PHOTOPRISM_URL` / `PHOTOPRISM_TOKEN` | – | PhotoPrism base URL + app password for the owner (`PHOTOPRISM_PUBLIC_URL` for browser links). Works alongside Immich or instead of it. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` / `OPENAI_BASE_URL` | – / `gpt-4o-mini` / OpenAI | Enables the ✨ features; any OpenAI-compatible endpoint works. |
 | `DEMO_DATA` | `false` | Seed sample trips into an empty database. |
 

@@ -75,3 +75,14 @@ export async function uploadForm<T>(url: string, file: File, fields: Record<stri
   if (!res.ok) throw new ApiError(res.status, j.error || res.statusText, j)
   return j as T
 }
+
+/** A photo's thumbnail (or the large preview), through Travel so the library key stays on the server. */
+export function photoThumb(p: { id: string; src?: string; hash?: string }, size: 'thumbnail' | 'preview' = 'thumbnail'): string {
+  const q = new URLSearchParams()
+  if (p.src === 'photoprism') { q.set('src', 'photoprism'); q.set('h', p.hash || '') }
+  if (size === 'preview') q.set('size', 'preview')
+  const qs = q.toString()
+  return `${V1}/photos/${encodeURIComponent(p.id)}/thumb${qs ? '?' + qs : ''}`
+}
+/** The key a hidden photo is stored under. */
+export const photoKey = (p: { id: string; src?: string }) => `${p.src || 'immich'}:${p.id}`

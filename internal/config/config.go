@@ -48,16 +48,19 @@ type Config struct {
 	FXProvider      string // auto | frankfurter | erapi | none
 
 	// Integration defaults; the values saved under Settings → Integrations win.
-	FireflyURL      string
-	FireflyToken    string
-	DawarichURL     string
-	DawarichAPIKey  string
-	ImmichURL       string
-	ImmichAPIKey    string
-	ImmichPublicURL string
-	OpenAIKey       string
-	OpenAIModel     string
-	OpenAIBaseURL   string
+	FireflyURL          string
+	FireflyToken        string
+	DawarichURL         string
+	DawarichAPIKey      string
+	ImmichURL           string
+	ImmichAPIKey        string
+	ImmichPublicURL     string
+	PhotoPrismURL       string
+	PhotoPrismToken     string
+	PhotoPrismPublicURL string
+	OpenAIKey           string
+	OpenAIModel         string
+	OpenAIBaseURL       string
 
 	// Outbound lookups (Nominatim, Overpass, Open-Meteo, Wikipedia) identify as this.
 	UserAgent string
@@ -150,16 +153,19 @@ func Load() (*Config, error) {
 		DefaultCurrency: strings.ToUpper(env("DEFAULT_CURRENCY", "EUR")),
 		FXProvider:      strings.ToLower(env("FX_PROVIDER", "auto")),
 
-		FireflyURL:      strings.TrimRight(env("FIREFLY_URL", ""), "/"),
-		FireflyToken:    env("FIREFLY_TOKEN", ""),
-		DawarichURL:     strings.TrimRight(env("DAWARICH_URL", ""), "/"),
-		DawarichAPIKey:  env("DAWARICH_API_KEY", ""),
-		ImmichURL:       strings.TrimRight(env("IMMICH_URL", ""), "/"),
-		ImmichAPIKey:    env("IMMICH_API_KEY", ""),
-		ImmichPublicURL: strings.TrimRight(env("IMMICH_PUBLIC_URL", ""), "/"),
-		OpenAIKey:       env("OPENAI_API_KEY", ""),
-		OpenAIModel:     env("OPENAI_MODEL", ""),
-		OpenAIBaseURL:   strings.TrimRight(env("OPENAI_BASE_URL", ""), "/"),
+		FireflyURL:          strings.TrimRight(env("FIREFLY_URL", ""), "/"),
+		FireflyToken:        env("FIREFLY_TOKEN", ""),
+		DawarichURL:         strings.TrimRight(env("DAWARICH_URL", ""), "/"),
+		DawarichAPIKey:      env("DAWARICH_API_KEY", ""),
+		ImmichURL:           strings.TrimRight(env("IMMICH_URL", ""), "/"),
+		ImmichAPIKey:        env("IMMICH_API_KEY", ""),
+		ImmichPublicURL:     strings.TrimRight(env("IMMICH_PUBLIC_URL", ""), "/"),
+		PhotoPrismURL:       strings.TrimRight(env("PHOTOPRISM_URL", ""), "/"),
+		PhotoPrismToken:     env("PHOTOPRISM_TOKEN", ""),
+		PhotoPrismPublicURL: strings.TrimRight(env("PHOTOPRISM_PUBLIC_URL", ""), "/"),
+		OpenAIKey:           env("OPENAI_API_KEY", ""),
+		OpenAIModel:         env("OPENAI_MODEL", ""),
+		OpenAIBaseURL:       strings.TrimRight(env("OPENAI_BASE_URL", ""), "/"),
 
 		UserAgent: env("USER_AGENT", "PocketTravel/1.0 (+https://github.com/abjelosevic88/pocket-homelab-travel)"),
 

@@ -544,6 +544,7 @@ func (s *Server) handleTripOverview(w http.ResponseWriter, r *http.Request) {
 	if imErr == nil {
 		imURL = imConn.public
 	}
+	_, ppURL, ppErr := s.photoprismFor(ctx, actorID(ctx))
 	budget := s.budgetSummary(t, expenses)
 	tripPeople, _ := s.store.ListTripPeople(ctx, t.ID)
 	budgetPlan, _ := s.store.BudgetPlan(ctx, t.ID)
@@ -564,9 +565,10 @@ func (s *Server) handleTripOverview(w http.ResponseWriter, r *http.Request) {
 		"integrations": map[string]any{
 			"firefly": map[string]any{"configured": moneyVia != "", "via": moneyVia, "tag": t.FireflyTag, "synced_at": syncedAt},
 			// "dawarich" is the recorded route, from Pocket Movement or Dawarich (source)
-			"dawarich": map[string]any{"configured": locOK, "enabled": t.Dawarich, "source": locSrc},
-			"immich":   map[string]any{"configured": imErr == nil, "enabled": t.Immich, "url": imURL},
-			"ai":       map[string]any{"configured": aiStatus.Ready, "model": aiModel, "provider": aiStatus.Selected},
+			"dawarich":   map[string]any{"configured": locOK, "enabled": t.Dawarich, "source": locSrc},
+			"immich":     map[string]any{"configured": imErr == nil, "enabled": t.Immich, "url": imURL},
+			"photoprism": map[string]any{"configured": ppErr == nil, "url": ppURL},
+			"ai":         map[string]any{"configured": aiStatus.Ready, "model": aiModel, "provider": aiStatus.Selected},
 		},
 	})
 }

@@ -173,6 +173,9 @@ func (s *Server) seedOwnerSettings(ctx context.Context, owner int64) error {
 	set("IMMICH_URL", &st.ImmichURL, s.cfg.ImmichURL)
 	set("IMMICH_API_KEY", &st.ImmichAPIKey, s.cfg.ImmichAPIKey)
 	set("IMMICH_PUBLIC_URL", &st.ImmichPublicURL, s.cfg.ImmichPublicURL)
+	set("PHOTOPRISM_URL", &st.PhotoPrismURL, s.cfg.PhotoPrismURL)
+	set("PHOTOPRISM_TOKEN", &st.PhotoPrismToken, s.cfg.PhotoPrismToken)
+	set("PHOTOPRISM_PUBLIC_URL", &st.PhotoPrismPublicURL, s.cfg.PhotoPrismPublicURL)
 	set("OPENAI_API_KEY", &st.OpenAIKey, s.cfg.OpenAIKey)
 	set("OPENAI_MODEL", &st.OpenAIModel, s.cfg.OpenAIModel)
 	set("OPENAI_BASE_URL", &st.OpenAIBaseURL, s.cfg.OpenAIBaseURL)
@@ -364,6 +367,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/countries/{code}", s.handleCountry)
 			r.Put("/countries/{code}/note", s.handlePutCountryNote)
 			r.Post("/countries/detect", s.handleDetectCountries)
+			r.Get("/photo-trips", s.handlePhotoTrips)
+			r.Post("/photo-trips/dismiss", s.handleDismissPhotoTrip)
+			r.Get("/photos/{id}/thumb", s.handlePhotoThumb)
 			r.Get("/trips", s.handleListTrips)
 			r.Post("/trips", s.handleCreateTrip)
 			r.Route("/trips/{tripID}", func(r chi.Router) {
@@ -465,6 +471,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/photos", s.handleTripPhotos)
 				r.Get("/pocket-places", s.handleTripPocketPlaces)
 				r.Get("/photos/{id}/thumb", s.handlePhotoThumb)
+				r.Put("/photos/hidden", s.handleHidePhotos)
 				r.Post("/refresh", s.handleTripRefresh)
 
 				r.Get("/export/calendar.ics", s.handleExportICS)
