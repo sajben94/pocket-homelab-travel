@@ -335,6 +335,10 @@ type Settings struct {
 	PhotoPrismURL       string `json:"photoprism_url"`
 	PhotoPrismToken     string `json:"photoprism_token"`
 	PhotoPrismPublicURL string `json:"photoprism_public_url"`
+	// Home, where trips start and end (finding trips in photos); unset = detected.
+	HomeName string   `json:"home_name"`
+	HomeLat  *float64 `json:"home_lat"`
+	HomeLng  *float64 `json:"home_lng"`
 	// Where trip routes, the timeline, distances and countries come from:
 	// movement (Pocket Movement, through Pocket Core only) | dawarich; "" =
 	// Pocket Movement while Travel is connected to Core and the link is on,

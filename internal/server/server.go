@@ -472,6 +472,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/pocket-places", s.handleTripPocketPlaces)
 				r.Get("/photos/{id}/thumb", s.handlePhotoThumb)
 				r.Put("/photos/hidden", s.handleHidePhotos)
+				r.Post("/places/from-photo", s.handlePlaceFromPhoto)
 				r.Post("/refresh", s.handleTripRefresh)
 
 				r.Get("/export/calendar.ics", s.handleExportICS)

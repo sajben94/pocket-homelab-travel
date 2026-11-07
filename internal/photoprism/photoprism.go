@@ -7,6 +7,7 @@
 package photoprism
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,6 +49,8 @@ type Photo struct {
 	Country  string   `json:"country"` // ISO code, upper case ("" when unknown)
 	Favorite bool     `json:"favorite"`
 	Duration string   `json:"duration,omitempty"`
+	Camera   string   `json:"camera,omitempty"` // "Apple iPhone 15 Pro"
+	Path     string   `json:"path,omitempty"`   // folder in originals
 }
 
 func (c *Client) do(ctx context.Context, path string, q url.Values) (*http.Response, error) {
@@ -115,10 +118,21 @@ type rawPhoto struct {
 	PlaceCity    string  `json:"PlaceCity"`
 	PlaceCountry string  `json:"PlaceCountry"`
 	Duration     int64   `json:"Duration"` // nanoseconds
+	CameraMake   string  `json:"CameraMake"`
+	CameraModel  string  `json:"CameraModel"`
+	Path         string  `json:"Path"`
 }
 
 func (r rawPhoto) photo() Photo {
-	p := Photo{ID: r.UID, Hash: r.Hash, Type: "IMAGE", FileName: r.FileName, Favorite: r.Favorite, City: r.PlaceCity}
+	p := Photo{ID: r.UID, Hash: r.Hash, Type: "IMAGE", FileName: r.FileName, Favorite: r.Favorite, City: r.PlaceCity, Path: r.Path}
+	if r.CameraModel != "" && r.CameraModel != "Unknown" {
+		p.Camera = strings.TrimSpace(strings.TrimPrefix(r.CameraMake, "Unknown") + " " + r.CameraModel)
+	}
+	if p.Path == "" {
+		if i := strings.LastIndex(r.FileName, "/"); i > 0 {
+			p.Path = r.FileName[:i]
+		}
+	}
 	if p.FileName == "" {
 		p.FileName = firstNonEmpty(r.OriginalName, r.Name)
 	}
@@ -251,6 +265,27 @@ func (c *Client) Thumbnail(ctx context.Context, w http.ResponseWriter, hash, siz
 	_, err = io.Copy(w, res.Body)
 	return err
 }
+
+// ThumbnailBytes returns a thumbnail (size thumbnail|preview) and its type.
+func (c *Client) ThumbnailBytes(ctx context.Context, hash, size string) ([]byte, string, error) {
+	var b bufWriter
+	err := c.Thumbnail(ctx, &b, hash, size)
+	return b.buf.Bytes(), b.h.Get("Content-Type"), err
+}
+
+type bufWriter struct {
+	buf bytes.Buffer
+	h   http.Header
+}
+
+func (b *bufWriter) Header() http.Header {
+	if b.h == nil {
+		b.h = http.Header{}
+	}
+	return b.h
+}
+func (b *bufWriter) Write(p []byte) (int, error) { return b.buf.Write(p) }
+func (b *bufWriter) WriteHeader(int)             {}
 
 // OpenURL is the PhotoPrism page that shows one photo.
 func OpenURL(public, uid string) string {

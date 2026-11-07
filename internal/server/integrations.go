@@ -67,6 +67,7 @@ func (s *Server) publicSettings(ctx context.Context, st store.Settings, u *store
 		"dawarich_url": st.DawarichURL, "dawarich_api_key": mask(st.DawarichAPIKey), "dawarich_configured": dwVia != "",
 		"immich_url": st.ImmichURL, "immich_public_url": st.ImmichPublicURL, "immich_api_key": mask(st.ImmichAPIKey), "immich_configured": imVia != "",
 		"photoprism_url": st.PhotoPrismURL, "photoprism_public_url": st.PhotoPrismPublicURL, "photoprism_token": mask(st.PhotoPrismToken), "photoprism_configured": st.PhotoPrismURL != "",
+		"home_name": st.HomeName, "home_lat": st.HomeLat, "home_lng": st.HomeLng,
 		"openai_api_key": mask(st.OpenAIKey), "openai_model": st.OpenAIModel, "openai_base_url": st.OpenAIBaseURL, "openai_configured": st.OpenAIKey != "",
 		"max_upload_bytes": s.cfg.MaxUploadBytes, "setup_complete": st.SetupComplete, "can_edit_global": u != nil && u.Role == "admin",
 	}
@@ -194,6 +195,18 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		cur.PhotoPrismURL = strings.TrimRight(strings.TrimSpace(in.PhotoPrismURL), "/")
 	}
 	secret("photoprism_token", &cur.PhotoPrismToken, in.PhotoPrismToken)
+	if keys["home_lat"] || keys["home_lng"] || keys["home_name"] {
+		was := store.Settings{HomeName: cur.HomeName, HomeLat: cur.HomeLat, HomeLng: cur.HomeLng}
+		cur.HomeName = strings.TrimSpace(in.HomeName)
+		cur.HomeLat, cur.HomeLng = in.HomeLat, in.HomeLng
+		if cur.HomeLat == nil || cur.HomeLng == nil || *cur.HomeLat < -90 || *cur.HomeLat > 90 || *cur.HomeLng < -180 || *cur.HomeLng > 180 {
+			cur.HomeName, cur.HomeLat, cur.HomeLng = "", nil, nil // cleared: detected again
+		}
+		same := func(a, b *float64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+		if !same(was.HomeLat, cur.HomeLat) || !same(was.HomeLng, cur.HomeLng) || was.HomeName != cur.HomeName {
+			_ = s.store.CacheDeleteLike(r.Context(), "user:"+strconv.FormatInt(u.ID, 10)+":photo-trips")
+		}
+	}
 	if keys["photoprism_public_url"] {
 		cur.PhotoPrismPublicURL = strings.TrimRight(strings.TrimSpace(in.PhotoPrismPublicURL), "/")
 	}

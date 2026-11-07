@@ -170,7 +170,7 @@ function useJustOpened() {
 
 let openModals = 0
 /** Is a dialog open? Then page shortcuts stay quiet. */
-export function modalOpen(): boolean { return openModals > 0 || !!document.querySelector('.modal-backdrop, .palette-backdrop') }
+export function modalOpen(): boolean { return openModals > 0 || !!document.querySelector('.modal-backdrop, .palette-backdrop, .photo-viewer') }
 
 export function Modal({ title, onClose, children, size = '', footer, className = '', bare = false, labelledBy }: { title?: React.ReactNode; onClose: () => void; children: React.ReactNode; size?: '' | 'sm' | 'lg' | 'xl'; footer?: React.ReactNode; className?: string; bare?: boolean; labelledBy?: string }) {
   const ref = useRef<HTMLDivElement>(null)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,13 +41,14 @@ type tripPhoto struct {
 	Duration  string   `json:"duration,omitempty"`
 	Thumbhash string   `json:"thumbhash,omitempty"`
 	Open      string   `json:"open,omitempty"` // the photo in its own app
+	Device    string   `json:"device"`         // which phone or app it came from: "iPhone 15 Pro", "WhatsApp"
 	Hidden    bool     `json:"hidden,omitempty"`
 }
 
 func (p tripPhoto) key() string { return p.Src + ":" + p.ID }
 
 func fromImmich(a immich.Asset, public string) tripPhoto {
-	p := tripPhoto{ID: a.ID, Src: "immich", Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Thumbhash: a.Thumbhash}
+	p := tripPhoto{ID: a.ID, Src: "immich", Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Thumbhash: a.Thumbhash, Device: deviceLabel(a.FileName, a.Path, a.Camera)}
 	if public != "" {
 		p.Open = public + "/photos/" + a.ID
 	}
@@ -54,7 +56,7 @@ func fromImmich(a immich.Asset, public string) tripPhoto {
 }
 
 func fromPhotoPrism(a photoprism.Photo, public string) tripPhoto {
-	p := tripPhoto{ID: a.ID, Src: "photoprism", Hash: a.Hash, Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration}
+	p := tripPhoto{ID: a.ID, Src: "photoprism", Hash: a.Hash, Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Device: deviceLabel(a.FileName, a.Path, a.Camera)}
 	if c := countries.Get(a.Country); c != nil {
 		p.Country = c.Name
 	}
@@ -62,6 +64,46 @@ func fromPhotoPrism(a photoprism.Photo, public string) tripPhoto {
 		p.Open = photoprism.OpenURL(public, a.ID)
 	}
 	return p
+}
+
+var (
+	waName     = regexp.MustCompile(`(?i)^(IMG|VID|AUD|PTT)-\d{8}-WA\d+`)
+	cameraJunk = regexp.MustCompile(`(?i)^(apple|google)\s+`) // the model says it all: "iPhone 15 Pro", "Pixel 8"
+)
+
+// deviceLabel says where a photo came from, so a trip's photos can be told
+// apart with one click: a messaging app when the file name or folder says so
+// (photos received in WhatsApp, Viber, Telegram, Messenger), screenshots, else
+// the camera ("iPhone 15 Pro", "Galaxy S23"), else "Unknown camera".
+func deviceLabel(file, path, camera string) string {
+	f, d := strings.ToLower(file), strings.ToLower(path)
+	switch {
+	case waName.MatchString(file) || strings.Contains(d, "whatsapp") || strings.Contains(f, "whatsapp"):
+		return "WhatsApp"
+	case strings.Contains(f, "viber") || strings.Contains(d, "viber"):
+		return "Viber"
+	case strings.Contains(f, "telegram") || strings.Contains(d, "telegram"):
+		return "Telegram"
+	case strings.HasPrefix(f, "fb_img") || strings.Contains(d, "messenger") || strings.Contains(f, "messenger") || strings.Contains(d, "facebook"):
+		return "Messenger"
+	case strings.Contains(d, "signal") || strings.HasPrefix(f, "signal-"):
+		return "Signal"
+	case strings.Contains(f, "screenshot") || strings.Contains(d, "screenshot"):
+		return "Screenshots"
+	}
+	if camera = strings.TrimSpace(camera); camera != "" {
+		// "Apple iPhone 15 Pro" → "iPhone 15 Pro"; "samsung SM-S911B" → "Samsung SM-S911B"
+		c := cameraJunk.ReplaceAllString(camera, "")
+		if c == "" {
+			c = camera
+		}
+		if f := strings.Fields(c); c == camera && len(f) > 1 && len(f[0]) > 2 {
+			f[0] = strings.ToUpper(f[0][:1]) + strings.ToLower(f[0][1:]) // "samsung", "SAMSUNG" → "Samsung"
+			c = strings.Join(f, " ")
+		}
+		return c
+	}
+	return "Unknown camera"
 }
 
 // photoprismFor is userID's PhotoPrism (direct only) and what a browser opens.
@@ -248,6 +290,16 @@ type PhotoTrip struct {
 	Cover     *tripPhoto `json:"cover,omitempty"`
 }
 
+// PhotoHome is where trips start and end: set in Settings, else where the
+// photos were taken on the most days.
+type PhotoHome struct {
+	Name string  `json:"name"`
+	Lat  float64 `json:"lat"`
+	Lng  float64 `json:"lng"`
+	Set  bool    `json:"set"` // chosen by the user, not detected
+	Days int     `json:"days"`
+}
+
 var immichCountryCodes map[string]string
 
 // countryCode turns Immich's country name into an ISO code ("" when unknown).
@@ -275,15 +327,17 @@ func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	key := "user:" + strconv.FormatInt(u.ID, 10) + ":photo-trips"
 	var found []PhotoTrip
+	var home PhotoHome
 	sources := []string{}
 	if v, at, ok := s.store.CacheGet(ctx, key); ok && !queryBool(r, "refresh") {
 		if ts, err := time.Parse(time.RFC3339Nano, at); err == nil && time.Since(ts) < 24*time.Hour {
 			var c struct {
 				Trips   []PhotoTrip `json:"trips"`
 				Sources []string    `json:"sources"`
+				Home    PhotoHome   `json:"home"`
 			}
 			if json.Unmarshal([]byte(v), &c) == nil {
-				found, sources = c.Trips, c.Sources
+				found, sources, home = c.Trips, c.Sources, c.Home
 			}
 		}
 	}
@@ -326,8 +380,16 @@ func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"trips": []PhotoTrip{}, "sources": sources, "connected": false})
 			return
 		}
-		found = findPhotoTrips(pts)
-		if b, err := json.Marshal(map[string]any{"trips": found, "sources": sources}); err == nil {
+		st, _ := s.store.GetSettings(ctx, u.ID)
+		var set *[2]float64
+		if st.HomeLat != nil && st.HomeLng != nil {
+			set = &[2]float64{*st.HomeLat, *st.HomeLng}
+		}
+		found, home = findPhotoTrips(pts, set)
+		if set != nil {
+			home.Name, home.Set = firstNonEmpty(st.HomeName, home.Name), true
+		}
+		if b, err := json.Marshal(map[string]any{"trips": found, "sources": sources, "home": home}); err == nil {
 			_ = s.store.CachePut(ctx, key, string(b))
 		}
 	}
@@ -342,7 +404,7 @@ func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, f)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"trips": out, "sources": sources, "connected": true})
+	writeJSON(w, http.StatusOK, map[string]any{"trips": out, "sources": sources, "connected": true, "home": home})
 }
 
 // handleDismissPhotoTrip: "this is not a trip".
@@ -372,16 +434,24 @@ func coveredByTrip(f PhotoTrip, trips []store.Trip) bool {
 
 const (
 	awayKm     = 80.0 // a day is "away" when its photos are this far from home
-	maxGapDays = 2    // days without photos that may sit inside one trip
+	maxGapDays = 4    // days without photos that may sit inside one trip
 )
 
 // findPhotoTrips groups located photos into trips: home is the area where
 // photos were taken on the most days; days with most photos far from it are
 // away, and runs of away days (gaps of up to two photo-less days) are trips.
 // A single day counts only when it is far (300 km+). Newest first.
-func findPhotoTrips(pts []geoPhoto) []PhotoTrip {
+//
+// A trip is everything between leaving home and coming back, however many
+// places it went through (Nitra → Belgrade → Novi Sad → Nitra is one trip).
+// set is the home from Settings; nil detects it.
+func findPhotoTrips(pts []geoPhoto, set *[2]float64) ([]PhotoTrip, PhotoHome) {
 	if len(pts) == 0 {
-		return []PhotoTrip{}
+		h := PhotoHome{}
+		if set != nil {
+			h.Lat, h.Lng = set[0], set[1]
+		}
+		return []PhotoTrip{}, h
 	}
 	byDay := map[string][]geoPhoto{}
 	for _, p := range pts {
@@ -414,6 +484,29 @@ func findPhotoTrips(pts []geoPhoto) []PhotoTrip {
 		}
 	}
 	hl, hg = hl/float64(n), hg/float64(n)
+	homeCities := map[string]int{}
+	for _, p := range pts {
+		if (cell{int(math.Floor(p.lat * 2)), int(math.Floor(p.lng * 2))}) == home && p.city != "" {
+			homeCities[p.city]++
+		}
+	}
+	ph := PhotoHome{Name: topKey(homeCities), Days: best}
+	if set != nil {
+		hl, hg = set[0], set[1]
+		ph.Days = 0
+		near := map[string]int{}
+		days := map[string]bool{}
+		for _, p := range pts {
+			if distKm(hl, hg, p.lat, p.lng) <= awayKm {
+				days[p.day] = true
+				if p.city != "" {
+					near[p.city]++
+				}
+			}
+		}
+		ph.Name, ph.Days = topKey(near), len(days)
+	}
+	ph.Lat, ph.Lng = hl, hg
 
 	days := make([]string, 0, len(byDay))
 	for d := range byDay {
@@ -494,12 +587,21 @@ func findPhotoTrips(pts []geoPhoto) []PhotoTrip {
 			}
 		}
 		city := topKey(cities)
+		// a second stop with a good share of the photos names the trip too
+		second := ""
+		for c, k := range cities {
+			if c != city && k*100 >= len(all)*15 && (second == "" || k > cities[second] || k == cities[second] && c < second) {
+				second = c
+			}
+		}
 		country := ""
 		if c := countries.Get(topKey(ctry)); c != nil {
 			country = c.Name
 		}
 		f.Place = strings.Trim(city+", "+country, ", ")
 		switch {
+		case city != "" && second != "":
+			f.Name = city + " & " + second
 		case city != "" && len(f.Countries) > 1:
 			f.Name = city + " & more"
 		case city != "":
@@ -525,7 +627,7 @@ func findPhotoTrips(pts []geoPhoto) []PhotoTrip {
 	if len(out) > 60 {
 		out = out[:60]
 	}
-	return out
+	return out, ph
 }
 
 func distKm(lat1, lng1, lat2, lng2 float64) float64 {
@@ -540,4 +642,78 @@ func topKey(m map[string]int) string {
 		}
 	}
 	return best
+}
+
+// handlePlaceFromPhoto makes a visited place where a photo was taken: named
+// from the map (OpenStreetMap), on the photo's day and time, with the photo
+// attached. For trips written after the fact.
+func (s *Server) handlePlaceFromPhoto(w http.ResponseWriter, r *http.Request) {
+	if !s.canEdit(w, r) {
+		return
+	}
+	ctx := r.Context()
+	t := tripFrom(ctx).trip
+	var in struct {
+		Src     string   `json:"src"`
+		ID      string   `json:"id"`
+		Hash    string   `json:"hash"`
+		Lat     *float64 `json:"lat"`
+		Lng     *float64 `json:"lng"`
+		TakenAt string   `json:"taken_at"`
+		City    string   `json:"city"`
+	}
+	if err := decode(r, &in); err != nil || in.Lat == nil || in.Lng == nil {
+		writeErr(w, http.StatusBadRequest, "this photo has no location")
+		return
+	}
+	p := &store.Place{TripID: t.ID, Category: "sight", Status: "visited", Currency: t.Currency, Lat: in.Lat, Lng: in.Lng, Name: firstNonEmpty(in.City, "Photo spot")}
+	if len(in.TakenAt) >= 10 {
+		p.DayDate, p.VisitedAt = in.TakenAt[:10], in.TakenAt[:10]
+	}
+	if len(in.TakenAt) >= 16 {
+		p.StartTime = in.TakenAt[11:16]
+	}
+	gctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	if g, err := s.geo.Reverse(gctx, *in.Lat, *in.Lng); err == nil && g != nil {
+		if g.Name != "" {
+			p.Name = g.Name
+		}
+		p.Address = g.Display
+		p.CountryCode = g.CountryCode
+		if g.Suggest != "" {
+			p.Category = g.Suggest
+		}
+	}
+	cancel()
+	if err := s.store.CreatePlace(ctx, p); err != nil {
+		s.fail(w, err, "create place")
+		return
+	}
+	// the photo itself, from the viewer's library
+	uid := actorID(ctx)
+	var img []byte
+	var ct string
+	var err error
+	switch in.Src {
+	case "photoprism":
+		if pp, _, e := s.photoprismFor(ctx, uid); e == nil {
+			img, ct, err = pp.ThumbnailBytes(ctx, cleanID(in.Hash, isHex), "preview")
+		}
+	default:
+		if im, _, e := s.immichFor(ctx, uid); e == nil {
+			img, ct, err = im.ThumbnailBytes(ctx, cleanID(in.ID, func(c rune) bool { return c == '-' || isHex(c) }), "preview")
+		}
+	}
+	if err == nil && len(img) > 0 && strings.HasPrefix(ct, "image/") {
+		if rel, err := s.saveFile(t.ID, extOf("", ct), img); err == nil {
+			_ = s.store.AddPlacePhoto(ctx, &store.PlacePhoto{PlaceID: p.ID, Path: rel, Source: in.Src})
+		}
+	}
+	s.store.LogActivity(ctx, t.ID, userFrom(ctx).ID, "added place", p.Name)
+	s.store.TouchTrip(ctx, t.ID)
+	p.Photos, _ = s.store.ListPlacePhotos(ctx, p.ID)
+	if p.Photos == nil {
+		p.Photos = []store.PlacePhoto{}
+	}
+	writeJSON(w, http.StatusCreated, p)
 }

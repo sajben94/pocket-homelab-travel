@@ -193,3 +193,58 @@ func TestPhotoPrismPhotosHiddenAndFoundTrips(t *testing.T) {
 		t.Fatalf("member sees owner's PhotoPrism: %s", b)
 	}
 }
+
+func TestDeviceLabel(t *testing.T) {
+	for _, c := range [][4]string{
+		{"IMG-20250719-WA0012.jpg", "", "", "WhatsApp"},
+		{"IMG_1234.jpg", "Pictures/WhatsApp Images", "", "WhatsApp"},
+		{"viber_image_2025-07-19_10-12-01-123.jpg", "", "", "Viber"},
+		{"FB_IMG_1690000000.jpg", "", "", "Messenger"},
+		{"Screenshot_20250719-101010.png", "", "Samsung SM-S911B", "Screenshots"},
+		{"IMG_1234.HEIC", "2025/07", "Apple iPhone 15 Pro", "iPhone 15 Pro"},
+		{"20250719_101010.jpg", "", "samsung SM-S911B", "Samsung SM-S911B"},
+		{"20250719_101010.jpg", "", "SAMSUNG SM-S911B", "Samsung SM-S911B"},
+		{"PXL_1.jpg", "", "Google Pixel 8", "Pixel 8"},
+		{"DSC0001.jpg", "", "", "Unknown camera"},
+	} {
+		if got := deviceLabel(c[0], c[1], c[2]); got != c[3] {
+			t.Errorf("deviceLabel(%q, %q, %q) = %q, want %q", c[0], c[1], c[2], got, c[3])
+		}
+	}
+}
+
+// Nitra → Belgrade → Novi Sad → Nitra is one trip, named after both cities;
+// a home set by hand wins over the detected one.
+func TestFindPhotoTripsMultiCityAndSetHome(t *testing.T) {
+	var pts []geoPhoto
+	add := func(day string, n int, lat, lng float64, city, cc string) {
+		for i := 0; i < n; i++ {
+			pts = append(pts, geoPhoto{day: day, lat: lat, lng: lng, city: city, country: cc, photo: tripPhoto{ID: day + city + strconv.Itoa(i), Type: "IMAGE"}})
+		}
+	}
+	for d := 1; d <= 20; d++ {
+		add(fmt.Sprintf("2025-06-%02d", d), 3, 48.3069, 18.0864, "Nitra", "SK")
+	}
+	add("2025-06-21", 2, 48.3069, 18.0864, "Nitra", "SK")
+	add("2025-06-21", 6, 44.7866, 20.4489, "Belgrade", "RS")
+	add("2025-06-22", 10, 44.7866, 20.4489, "Belgrade", "RS")
+	// 23rd–25th no photos (still away)
+	add("2025-06-26", 8, 45.2671, 19.8335, "Novi Sad", "RS")
+	add("2025-06-27", 3, 48.3069, 18.0864, "Nitra", "SK")
+	trips, home := findPhotoTrips(pts, nil)
+	if home.Name != "Nitra" || home.Set || len(trips) != 1 {
+		t.Fatalf("home %+v trips %+v", home, trips)
+	}
+	f := trips[0]
+	if f.Start != "2025-06-21" || f.End != "2025-06-26" || f.Days != 6 || f.Name != "Belgrade & Novi Sad 2025" || len(f.Countries) != 1 || f.Countries[0] != "RS" {
+		t.Fatalf("trip %+v", f)
+	}
+	// Home set to Belgrade: Nitra days are now the trips
+	trips, home = findPhotoTrips(pts, &[2]float64{44.7866, 20.4489})
+	if home.Name != "Belgrade" || home.Lat != 44.7866 {
+		t.Fatalf("set home %+v", home)
+	}
+	if len(trips) == 0 || trips[len(trips)-1].Start != "2025-06-01" {
+		t.Fatalf("with home in Belgrade the Nitra days should be a trip: %+v", trips)
+	}
+}

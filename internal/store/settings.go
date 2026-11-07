@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 )
 
 // DefaultTitle is the app title until someone changes it.
@@ -105,6 +106,16 @@ func (s *Store) GetSettings(ctx context.Context, userID int64) (Settings, error)
 			st.PhotoPrismToken = v
 		case "photoprism_public_url":
 			st.PhotoPrismPublicURL = v
+		case "home_name":
+			st.HomeName = v
+		case "home_lat", "home_lng":
+			if f, err := strconv.ParseFloat(v, 64); err == nil && v != "" {
+				if k == "home_lat" {
+					st.HomeLat = &f
+				} else {
+					st.HomeLng = &f
+				}
+			}
 		case "location_source":
 			st.LocationSource = v
 		case "places_mode":
@@ -160,6 +171,9 @@ func personalKV(st Settings) map[string]string {
 		"photoprism_url":        st.PhotoPrismURL,
 		"photoprism_token":      st.PhotoPrismToken,
 		"photoprism_public_url": st.PhotoPrismPublicURL,
+		"home_name":             st.HomeName,
+		"home_lat":              fstr(st.HomeLat),
+		"home_lng":              fstr(st.HomeLng),
 		"location_source":       st.LocationSource,
 		"places_mode":           st.PlacesMode,
 		"ai_provider":           st.AIProvider, "ai_pocket_model": st.AIPocketModel,
@@ -287,4 +301,11 @@ func (s *Store) GetFXRate(ctx context.Context, base, quote, date string) (float6
 func (s *Store) PutFXRate(ctx context.Context, base, quote, date string, rate float64, source string) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO fx_cache (base, quote, date, rate, source) VALUES (?, ?, ?, ?, ?) ON CONFLICT(base, quote, date) DO UPDATE SET rate = excluded.rate, source = excluded.source`, base, quote, date, rate, source)
 	return err
+}
+
+func fstr(f *float64) string {
+	if f == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*f, 'f', 6, 64)
 }

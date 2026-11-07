@@ -14,6 +14,7 @@ import { CurrencySelect } from '../components/Money'
 import { TILES } from '../components/Map'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
 import { NeedsCore } from '../components/NeedsCore'
+import { GeoSearch } from '../components/GeoSearch'
 
 type TabId = 'general' | 'integrations' | 'import' | 'profile' | 'users' | 'api' | 'data' | 'about'
 
@@ -142,6 +143,9 @@ function General() {
       <Section title="Stays" sub="What a new stay starts with; each stay can still have its own times.">
         <SettingRow title="Default check-in" help="Also used for stays saved without a time."><input type="time" value={f.checkin_time || '15:00'} onChange={e => setF({ ...f, checkin_time: e.target.value })} style={{ width: 130 }} aria-label="Default check-in time" /></SettingRow>
         <SettingRow title="Default check-out"><input type="time" value={f.checkout_time || '11:00'} onChange={e => setF({ ...f, checkout_time: e.target.value })} style={{ width: 130 }} aria-label="Default check-out time" /></SettingRow>
+        <SettingRow title="Home" help={f.home_lat != null ? <>Trips found in your photos start and end at <b>{f.home_name || `${f.home_lat.toFixed(3)}, ${f.home_lng?.toFixed(3)}`}</b>. <button type="button" className="link-btn" onClick={() => save({ home_name: '', home_lat: null, home_lng: null })}>Detect it again</button></> : 'Not set: detected from your photos (where you took them on the most days). Used to find trips in them.'}>
+          <div style={{ width: 260 }}><GeoSearch key={f.home_name} onPick={r => save({ home_name: r.city || r.name, home_lat: r.lat, home_lng: r.lng })} placeholder={f.home_name || 'Your town…'} /></div>
+        </SettingRow>
       </Section>
       <Section title="Maps & places">
         <SettingRow title="Map tiles" help="All free and keyless. Satellite is Esri imagery with a labels layer on top."><Select value={f.map_tiles} onChange={v => setF({ ...f, map_tiles: v })} options={Object.entries(TILES).map(([v, t]) => ({ value: v, label: t.label }))} /></SettingRow>
