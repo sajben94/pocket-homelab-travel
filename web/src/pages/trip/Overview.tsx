@@ -11,6 +11,7 @@ import { useTrip } from './ctx'
 import { RecapModal } from './ai'
 import { PocketPlacesCard } from './PocketPlaces'
 import { PocketWalletCard } from './PocketWallet'
+import { PocketTrailsCard } from './PocketTrails'
 import { useState } from 'react'
 
 const regionNames = typeof Intl !== 'undefined' && 'DisplayNames' in Intl ? new Intl.DisplayNames(undefined, { type: 'region' }) : null
@@ -112,6 +113,7 @@ export function OverviewTab() {
       {!integ.firefly.configured && !integ.dawarich.configured && !integ.immich.configured && <Card title="Connect your other apps" className="span2"><p className="muted">Connect <b>Pocket Money</b> to see what the trip really cost, <b>Pocket Movement</b> (through Pocket Core) or <b>Dawarich</b> for the route you actually took, and <b>Immich</b> for the photos — all under <Link to="/settings/integrations">Settings → Integrations</Link>.</p></Card>}
       {/* last, so they never push the cards above them while they load */}
       <PocketWalletCard />
+      <PocketTrailsCard />
       <PocketPlacesCard />
     </div>
   )

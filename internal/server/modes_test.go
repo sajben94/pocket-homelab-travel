@@ -56,6 +56,7 @@ func TestConnectionModesReportedToCore(t *testing.T) {
 		"owner@example.com movement": "core", "member@example.com movement": "core",
 		"owner@example.com places": "core", "member@example.com places": "core",
 		"owner@example.com wallet": "core", "member@example.com wallet": "core",
+		"owner@example.com trails": "core", "member@example.com trails": "core",
 	}
 	got := h.waitModes(1)
 	if len(got) != len(want) {
@@ -110,6 +111,15 @@ func TestConnectionModesReportedToCore(t *testing.T) {
 	got = h.waitModes(6)
 	if got["owner@example.com wallet"] != "off" || got["member@example.com wallet"] != "core" {
 		t.Fatalf("after wallet off %v", got)
+	}
+
+	// Switching Pocket Trails off for oneself.
+	if code, body := h.do(h.memberTok, "PUT", "/api/v1/settings", map[string]any{"trails_mode": "off"}); code != 200 {
+		t.Fatalf("trails off %d %s", code, body)
+	}
+	got = h.waitModes(7)
+	if got["member@example.com trails"] != "off" || got["owner@example.com trails"] != "core" {
+		t.Fatalf("after trails off %v", got)
 	}
 
 	// Saving something unrelated sends nothing.

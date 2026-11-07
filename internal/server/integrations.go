@@ -51,6 +51,7 @@ func (s *Server) publicSettings(ctx context.Context, st store.Settings, u *store
 	mvOn, _ := s.movementState(ctx, u, false) // just asked above (or no Core)
 	plMode, plVia, plDetail := s.placesStatus(ctx, u, st)
 	wlMode, wlVia, wlDetail := s.walletStatus(ctx, u, st)
+	trMode, trVia, trDetail := s.trailsStatus(ctx, u, st)
 	return map[string]any{
 		// core_ready: connected and registered; choices that only work
 		// through Pocket Core are offered only then.
@@ -63,6 +64,7 @@ func (s *Server) publicSettings(ctx context.Context, st store.Settings, u *store
 		"immich_mode": imMode, "immich_via": imVia, "immich_detail": imDetail, "immich_source": imSource,
 		"places_mode": plMode, "places_via": plVia, "places_detail": plDetail,
 		"wallet_mode": wlMode, "wallet_via": wlVia, "wallet_detail": wlDetail,
+		"trails_mode": trMode, "trails_via": trVia, "trails_detail": trDetail,
 		"title": st.Title, "home_currency": st.HomeCurrency, "date_format": st.DateFormat, "time_format": st.TimeFormat,
 		"distance_unit": st.DistanceUnit, "fx_auto": st.FXAuto, "fx_provider": s.cfg.FXProvider, "map_tiles": st.MapTiles, "auto_photos": st.AutoPhotos,
 		"firefly_url": st.FireflyURL, "firefly_token": mask(st.FireflyToken), "firefly_configured": moneyVia != "",
@@ -169,6 +171,15 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if keys["trails_mode"] {
+		switch in.TrailsMode {
+		case "", modeCore, modeOff:
+			cur.TrailsMode = in.TrailsMode
+		default:
+			writeErr(w, http.StatusBadRequest, "choose Pocket Core or Off for Pocket Trails")
+			return
+		}
+	}
 	for k, m := range map[string][2]*string{"money_mode": {&cur.MoneyMode, &in.MoneyMode}, "dawarich_mode": {&cur.DawarichMode, &in.DawarichMode}, "immich_mode": {&cur.ImmichMode, &in.ImmichMode}} {
 		if keys[k] {
 			switch v := *m[1]; v {
@@ -225,7 +236,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only this person's route/photo caches depend on their credentials.
 	_ = s.store.CacheDeleteLike(r.Context(), "trip:%:u"+strconv.FormatInt(u.ID, 10)+":%")
-	for _, k := range []string{"money_mode", "dawarich_mode", "immich_mode", "firefly_token", "dawarich_api_key", "immich_api_key", "location_source", "places_mode", "wallet_mode"} {
+	for _, k := range []string{"money_mode", "dawarich_mode", "immich_mode", "firefly_token", "dawarich_api_key", "immich_api_key", "location_source", "places_mode", "wallet_mode", "trails_mode"} {
 		if keys[k] {
 			s.modesChanged() // a mode changed or a connection was removed: tell Core's map
 			break
@@ -356,6 +367,23 @@ func (s *Server) handleIntegrationTest(w http.ResponseWriter, r *http.Request) {
 			var le *core.LinkError
 			if errors.As(err, &le) {
 				err = errors.New(walletReason(le.Reason))
+			}
+		}
+	case "trails":
+		// Always live: a fresh link token from Core.
+		u := userFrom(r.Context())
+		if !s.core.Configured() {
+			err = errors.New("Pocket Trails needs Pocket Core: there is no Pocket Core on this box")
+			break
+		}
+		var tc *trailsConn
+		if tc, err = s.openTrails(ctx, u); err == nil {
+			err = tc.client.Ping(ctx)
+			msg = "Pocket Trails reachable through Pocket Core"
+		} else {
+			var le *core.LinkError
+			if errors.As(err, &le) {
+				err = errors.New(trailsReason(le.Reason))
 			}
 		}
 	case "openai":
