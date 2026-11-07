@@ -169,7 +169,11 @@ func (c *Client) Search(ctx context.Context, from, to string, geoOnly bool, limi
 	}
 	var out []Photo
 	seen := map[string]bool{}
-	for offset := 0; offset < 400000; offset += 500 {
+	// With merged=true "count" limits files, not photos: a photo with a RAW and
+	// a JPEG (or a live photo) takes two, so a full batch can hold fewer than
+	// 500 photos. Move on by the photos received (a batch that overlaps the
+	// next is harmless, they are de-duplicated) and stop only on an empty one.
+	for offset, n := 0, 0; n < 2000; n++ {
 		q.Set("offset", strconv.Itoa(offset))
 		res, err := c.do(ctx, "/api/v1/photos", q)
 		if err != nil {
@@ -202,9 +206,10 @@ func (c *Client) Search(ctx context.Context, from, to string, geoOnly bool, limi
 				return out, nil
 			}
 		}
-		if len(page) < 500 {
+		if len(page) == 0 {
 			break
 		}
+		offset += len(page)
 	}
 	return out, nil
 }
