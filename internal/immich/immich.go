@@ -19,6 +19,8 @@ type Client struct {
 	BaseURL string
 	APIKey  string
 	HTTP    *http.Client
+	// Progress, when set, hears how many assets a search has seen so far.
+	Progress func(seen int)
 }
 
 // New creates a client.
@@ -92,8 +94,8 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 // Search returns every asset taken between two instants (inclusive start, exclusive end).
 func (c *Client) Search(ctx context.Context, after, before time.Time, limit int) ([]Asset, error) {
 	var out []Asset
-	for page := 1; page < 200; page++ {
-		body := map[string]any{"takenAfter": after.UTC().Format(time.RFC3339), "takenBefore": before.UTC().Format(time.RFC3339), "size": 500, "page": page, "withExif": true, "order": "asc", "visibility": "timeline"}
+	for page := 1; page < 400; page++ {
+		body := map[string]any{"takenAfter": after.UTC().Format(time.RFC3339), "takenBefore": before.UTC().Format(time.RFC3339), "size": 1000, "page": page, "withExif": true, "order": "asc", "visibility": "timeline"}
 		res, err := c.req(ctx, http.MethodPost, "/api/search/metadata", body)
 		if err != nil {
 			return nil, err
@@ -158,6 +160,9 @@ func (c *Client) Search(ctx context.Context, after, before time.Time, limit int)
 			if limit > 0 && len(out) >= limit {
 				return out, nil
 			}
+		}
+		if c.Progress != nil {
+			c.Progress(len(out))
 		}
 		if r.Assets.NextPage == nil || len(r.Assets.Items) == 0 {
 			break

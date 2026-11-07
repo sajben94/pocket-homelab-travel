@@ -38,9 +38,11 @@ Synced expenses have `source` `money` or `firefly` (direct connection to a real 
 | GET | `/trips/{id}/photos` | Photos from the viewer's Immich and PhotoPrism in the date range (`src`, `hidden`); a library that failed while another answered is named in `X-Photos-Error` |
 | PUT | `/trips/{id}/photos/hidden` | `{"photos": ["immich:<id>", "photoprism:<uid>"], "hidden": true}`: hide from the trip (per viewer) or show again |
 | GET | `/photos/{id}/thumb?size=thumbnail\|preview` | Proxied thumbnail (Immich asset id; PhotoPrism: `&src=photoprism&h=<file hash>`). `/trips/{id}/photos/{id}/thumb` works too |
-| GET | `/photo-trips?refresh=1` | Trips found in the viewer's photo locations and dates that no trip covers yet (cached a day) |
+| GET | `/photo-trips?refresh=1` | Trips found in the viewer's photo locations and dates that no trip covers yet. Scans run in the background: `state` is `scanning` (with `seen`, photos so far), `done` (with `trips`, `home`) or `error`; ask again until done. The result is kept a day |
 | POST | `/photo-trips/dismiss` | `{"start_date": "2025-05-01"}`: "not a trip" |
-| POST | `/trips/{id}/places/from-photo` | `{"src","id","hash","lat","lng","taken_at","city"}`: a visited place where the photo was taken (named from OpenStreetMap), on its day, with the photo attached |
+| GET | `/trips/{id}/places/from-photo?lat=&lng=` | Name, address and category for a place where a photo was taken (OpenStreetMap); nothing is saved |
+| POST | `/trips/{id}/places/{pid}/photos/from-library` | `{"src","id","hash"}`: attach a photo from the viewer's Immich or PhotoPrism to a place |
+| GET / PUT | `/trips/{id}/photos/sources` | `{"off": ["WhatsApp", "Camera-Jarka · iPhone 15 Pro"]}`: phones, folders or apps the viewer left out of this trip's photos |
 | GET | `/trips/{id}/weather` | Daily weather for the trip dates |
 | GET | `/trips/{id}/pocket-places` | The viewer's own Pocket Places for the trip (through Pocket Core, `places:read`): `{status, reason, detail, places_url, trip_url, lists, want, been, visits, spent}`. Always 200; `status` is `ok`, `no_core`, `off` (switched off in Settings), `unavailable` (Core refused the link, `reason` says which) or `error` (no answer within 6 s). Open a place at `places_url + /places/{id}`, a list at `/lists/{id}` |
 | GET | `/fx?from=USD&to=EUR&date=` | Exchange rate |

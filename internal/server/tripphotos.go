@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,15 +41,16 @@ type tripPhoto struct {
 	Favorite  bool     `json:"favorite"`
 	Duration  string   `json:"duration,omitempty"`
 	Thumbhash string   `json:"thumbhash,omitempty"`
-	Open      string   `json:"open,omitempty"` // the photo in its own app
-	Device    string   `json:"device"`         // which phone or app it came from: "iPhone 15 Pro", "WhatsApp"
+	Open      string   `json:"open,omitempty"`   // the photo in its own app
+	Device    string   `json:"device"`           // which phone or app it came from: "iPhone 15 Pro", "WhatsApp"
+	Folder    string   `json:"folder,omitempty"` // where it is stored ("Photos/Camera-Jarka"), dated sub-folders left off
 	Hidden    bool     `json:"hidden,omitempty"`
 }
 
 func (p tripPhoto) key() string { return p.Src + ":" + p.ID }
 
 func fromImmich(a immich.Asset, public string) tripPhoto {
-	p := tripPhoto{ID: a.ID, Src: "immich", Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Thumbhash: a.Thumbhash, Device: deviceLabel(a.FileName, a.Path, a.Camera)}
+	p := tripPhoto{ID: a.ID, Src: "immich", Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Thumbhash: a.Thumbhash, Device: deviceLabel(a.FileName, a.Path, a.Camera), Folder: photoFolder(a.Path)}
 	if public != "" {
 		p.Open = public + "/photos/" + a.ID
 	}
@@ -56,7 +58,7 @@ func fromImmich(a immich.Asset, public string) tripPhoto {
 }
 
 func fromPhotoPrism(a photoprism.Photo, public string) tripPhoto {
-	p := tripPhoto{ID: a.ID, Src: "photoprism", Hash: a.Hash, Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Device: deviceLabel(a.FileName, a.Path, a.Camera)}
+	p := tripPhoto{ID: a.ID, Src: "photoprism", Hash: a.Hash, Type: a.Type, FileName: a.FileName, TakenAt: a.TakenAt, Lat: a.Lat, Lng: a.Lng, City: a.City, Country: a.Country, Favorite: a.Favorite, Duration: a.Duration, Device: deviceLabel(a.FileName, a.Path, a.Camera), Folder: photoFolder(a.Path)}
 	if c := countries.Get(a.Country); c != nil {
 		p.Country = c.Name
 	}
@@ -104,6 +106,20 @@ func deviceLabel(file, path, camera string) string {
 		return c
 	}
 	return "Unknown camera"
+}
+
+var datedPart = regexp.MustCompile(`^(\d{1,4}|\d{4}[-_.]\d{2}([-_.]\d{2})?)$`)
+
+// photoFolder is the folder a photo is kept in without the dated
+// sub-folders libraries sort into ("Photos/Camera-Jarka/2025/07" →
+// "Photos/Camera-Jarka"): two phones of the same model that upload into
+// their own folders are told apart by it.
+func photoFolder(path string) string {
+	parts := strings.Split(strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/"), "/")
+	for len(parts) > 0 && (parts[len(parts)-1] == "" || datedPart.MatchString(parts[len(parts)-1])) {
+		parts = parts[:len(parts)-1]
+	}
+	return strings.Join(parts, "/")
 }
 
 // photoprismFor is userID's PhotoPrism (direct only) and what a browser opens.
@@ -318,36 +334,110 @@ func countryCode(name string) string {
 	return immichCountryCodes[strings.ToLower(name)]
 }
 
+// A scan of someone's whole photo library, running in the background: big
+// libraries take minutes, far longer than a request (or a proxy) waits.
+type photoScan struct {
+	running bool
+	seen    int // photos looked at so far
+	located int // of them with a location
+	started time.Time
+	err     string
+}
+
+var (
+	scansMu sync.Mutex
+	scans   = map[int64]*photoScan{}
+)
+
+func scanState(uid int64) photoScan {
+	scansMu.Lock()
+	defer scansMu.Unlock()
+	if sc := scans[uid]; sc != nil {
+		return *sc
+	}
+	return photoScan{}
+}
+
 // handlePhotoTrips finds trips in the viewer's photo locations and dates:
 // days whose photos were taken far from home, in runs, where no trip of
-// theirs is. Scanning a whole library is slow, so the answer is kept a day
-// (?refresh=1 scans again).
+// theirs is. The answer is kept a day; without one (or with ?refresh=1) a
+// scan starts in the background and the answer says how far it got
+// (state scanning | done | error); the page asks again until it is done.
 func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
 	ctx := r.Context()
-	key := "user:" + strconv.FormatInt(u.ID, 10) + ":photo-trips"
-	var found []PhotoTrip
-	var home PhotoHome
-	sources := []string{}
-	if v, at, ok := s.store.CacheGet(ctx, key); ok && !queryBool(r, "refresh") {
-		if ts, err := time.Parse(time.RFC3339Nano, at); err == nil && time.Since(ts) < 24*time.Hour {
-			var c struct {
-				Trips   []PhotoTrip `json:"trips"`
-				Sources []string    `json:"sources"`
-				Home    PhotoHome   `json:"home"`
-			}
-			if json.Unmarshal([]byte(v), &c) == nil {
-				found, sources, home = c.Trips, c.Sources, c.Home
+	_, _, ppErr := s.photoprismFor(ctx, u.ID)
+	_, _, imErr := s.immichFor(ctx, u.ID)
+	if ppErr != nil && imErr != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"connected": false, "state": "done", "trips": []PhotoTrip{}})
+		return
+	}
+	key := photoTripsKey(u.ID)
+	sc := scanState(u.ID)
+	if sc.running {
+		writeJSON(w, http.StatusOK, map[string]any{"connected": true, "state": "scanning", "seen": sc.seen, "located": sc.located, "started_at": sc.started.Format(time.RFC3339)})
+		return
+	}
+	if !queryBool(r, "refresh") {
+		if v, at, ok := s.store.CacheGet(ctx, key); ok {
+			if ts, err := time.Parse(time.RFC3339Nano, at); err == nil && time.Since(ts) < 24*time.Hour {
+				var c struct {
+					Trips   []PhotoTrip `json:"trips"`
+					Sources []string    `json:"sources"`
+					Home    PhotoHome   `json:"home"`
+					Seen    int         `json:"seen"`
+					Located int         `json:"located"`
+				}
+				if json.Unmarshal([]byte(v), &c) == nil {
+					// drop what a trip now covers and what was dismissed (both
+					// change without a rescan)
+					trips, _ := s.store.ListTrips(ctx, store.TripFilter{UserID: u.ID})
+					dismissed, _ := s.store.DismissedPhotoTrips(ctx, u.ID)
+					out := []PhotoTrip{}
+					for _, f := range c.Trips {
+						if !dismissed[f.Start] && !coveredByTrip(f, trips) {
+							out = append(out, f)
+						}
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"connected": true, "state": "done", "trips": out, "sources": c.Sources, "home": c.Home, "seen": c.Seen, "located": c.Located, "scanned_at": ts.Format(time.RFC3339)})
+					return
+				}
 			}
 		}
+		if sc.err != "" { // the last scan failed: say so until asked to try again
+			writeJSON(w, http.StatusOK, map[string]any{"connected": true, "state": "error", "error": sc.err, "seen": sc.seen})
+			return
+		}
 	}
-	if found == nil {
-		var pts []geoPhoto
-		var errs []string
-		scanCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	s.startPhotoScan(u.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "state": "scanning", "seen": 0, "started_at": time.Now().Format(time.RFC3339)})
+}
+
+func photoTripsKey(uid int64) string { return "user:" + strconv.FormatInt(uid, 10) + ":photo-trips" }
+
+// startPhotoScan looks through uid's libraries in the background and keeps
+// the trips found (unless a scan is already running).
+func (s *Server) startPhotoScan(uid int64) {
+	scansMu.Lock()
+	if sc := scans[uid]; sc != nil && sc.running {
+		scansMu.Unlock()
+		return
+	}
+	sc := &photoScan{running: true, started: time.Now()}
+	scans[uid] = sc
+	scansMu.Unlock()
+	progress := func(base int) func(int) {
+		return func(n int) { scansMu.Lock(); sc.seen = base + n; scansMu.Unlock() }
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 		defer cancel()
-		if pp, public, err := s.photoprismFor(scanCtx, u.ID); err == nil {
-			ps, err := pp.Search(scanCtx, "", "", true, 0)
+		var pts []geoPhoto
+		var errs, sources []string
+		if pp, public, err := s.photoprismFor(ctx, uid); err == nil {
+			pp.HTTP.Timeout = 2 * time.Minute // one big batch can be slow on a busy box
+			pp.Progress = progress(0)
+			ps, err := pp.Search(ctx, "", "", true, 0)
 			if err != nil {
 				errs = append(errs, "PhotoPrism: "+err.Error())
 			} else {
@@ -359,8 +449,10 @@ func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if im, conn, err := s.immichFor(scanCtx, u.ID); err == nil {
-			as, err := im.Search(scanCtx, time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().AddDate(0, 0, 1), 0)
+		if im, conn, err := s.immichFor(ctx, uid); err == nil {
+			im.HTTP.Timeout = 2 * time.Minute
+			im.Progress = progress(scanState(uid).seen)
+			as, err := im.Search(ctx, time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), time.Now().AddDate(0, 0, 1), 0)
 			if err != nil {
 				errs = append(errs, "Immich: "+err.Error())
 			} else {
@@ -372,39 +464,36 @@ func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		finish := func(e string) {
+			scansMu.Lock()
+			sc.running, sc.err, sc.located = false, e, len(pts)
+			scansMu.Unlock()
+		}
 		if len(sources) == 0 {
-			if len(errs) > 0 {
-				writeErr(w, http.StatusBadGateway, strings.Join(errs, "; "))
-				return
+			msg := strings.Join(errs, "; ")
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				msg = "the library took longer than 20 minutes to look through (" + msg + ")"
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"trips": []PhotoTrip{}, "sources": sources, "connected": false})
+			s.log.Warn("photo trip scan failed", "user", uid, "err", msg)
+			finish(firstNonEmpty(msg, "no photo library answered"))
 			return
 		}
-		st, _ := s.store.GetSettings(ctx, u.ID)
+		st, _ := s.store.GetSettings(ctx, uid)
 		var set *[2]float64
 		if st.HomeLat != nil && st.HomeLng != nil {
 			set = &[2]float64{*st.HomeLat, *st.HomeLng}
 		}
-		found, home = findPhotoTrips(pts, set)
+		found, home := findPhotoTrips(pts, set)
 		if set != nil {
 			home.Name, home.Set = firstNonEmpty(st.HomeName, home.Name), true
 		}
-		if b, err := json.Marshal(map[string]any{"trips": found, "sources": sources, "home": home}); err == nil {
-			_ = s.store.CachePut(ctx, key, string(b))
+		seen := scanState(uid).seen
+		if b, err := json.Marshal(map[string]any{"trips": found, "sources": sources, "home": home, "seen": seen, "located": len(pts)}); err == nil {
+			_ = s.store.CachePut(context.Background(), photoTripsKey(uid), string(b))
 		}
-	}
-	// Drop what a trip now covers and what was dismissed (both change
-	// without a rescan).
-	trips, _ := s.store.ListTrips(ctx, store.TripFilter{UserID: u.ID})
-	dismissed, _ := s.store.DismissedPhotoTrips(ctx, u.ID)
-	out := []PhotoTrip{}
-	for _, f := range found {
-		if dismissed[f.Start] || coveredByTrip(f, trips) {
-			continue
-		}
-		out = append(out, f)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"trips": out, "sources": sources, "connected": true, "home": home})
+		s.log.Info("photo trip scan done", "user", uid, "photos", seen, "located", len(pts), "trips", len(found), "took", time.Since(sc.started).Round(time.Second))
+		finish("")
+	}()
 }
 
 // handleDismissPhotoTrip: "this is not a trip".
@@ -644,76 +733,132 @@ func topKey(m map[string]int) string {
 	return best
 }
 
-// handlePlaceFromPhoto makes a visited place where a photo was taken: named
-// from the map (OpenStreetMap), on the photo's day and time, with the photo
-// attached. For trips written after the fact.
-func (s *Server) handlePlaceFromPhoto(w http.ResponseWriter, r *http.Request) {
+// handlePlaceFromPhotoSuggest fills in a new place from a photo's location:
+// its name, address and category from the map (OpenStreetMap). Nothing is
+// saved; the place form opens with these and the photo's day and time.
+func (s *Server) handlePlaceFromPhotoSuggest(w http.ResponseWriter, r *http.Request) {
+	lat, err1 := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	lng, err2 := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
+	if err1 != nil || err2 != nil {
+		writeErr(w, http.StatusBadRequest, "this photo has no location")
+		return
+	}
+	out := map[string]any{"lat": lat, "lng": lng}
+	gctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if g, err := s.geo.Reverse(gctx, lat, lng); err == nil && g != nil {
+		out["name"], out["address"], out["country_code"] = g.Name, g.Display, g.CountryCode
+		if g.Suggest != "" {
+			out["category"] = g.Suggest
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAttachLibraryPhoto adds a photo from the viewer's Immich or
+// PhotoPrism to a place (the large preview is copied in).
+func (s *Server) handleAttachLibraryPhoto(w http.ResponseWriter, r *http.Request) {
 	if !s.canEdit(w, r) {
 		return
 	}
 	ctx := r.Context()
 	t := tripFrom(ctx).trip
-	var in struct {
-		Src     string   `json:"src"`
-		ID      string   `json:"id"`
-		Hash    string   `json:"hash"`
-		Lat     *float64 `json:"lat"`
-		Lng     *float64 `json:"lng"`
-		TakenAt string   `json:"taken_at"`
-		City    string   `json:"city"`
-	}
-	if err := decode(r, &in); err != nil || in.Lat == nil || in.Lng == nil {
-		writeErr(w, http.StatusBadRequest, "this photo has no location")
+	p, err := s.store.GetPlace(ctx, t.ID, idParam(r, "id"))
+	if err != nil {
+		s.fail(w, err, "get place")
 		return
 	}
-	p := &store.Place{TripID: t.ID, Category: "sight", Status: "visited", Currency: t.Currency, Lat: in.Lat, Lng: in.Lng, Name: firstNonEmpty(in.City, "Photo spot")}
-	if len(in.TakenAt) >= 10 {
-		p.DayDate, p.VisitedAt = in.TakenAt[:10], in.TakenAt[:10]
-	}
-	if len(in.TakenAt) >= 16 {
-		p.StartTime = in.TakenAt[11:16]
-	}
-	gctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	if g, err := s.geo.Reverse(gctx, *in.Lat, *in.Lng); err == nil && g != nil {
-		if g.Name != "" {
-			p.Name = g.Name
-		}
-		p.Address = g.Display
-		p.CountryCode = g.CountryCode
-		if g.Suggest != "" {
-			p.Category = g.Suggest
-		}
-	}
-	cancel()
-	if err := s.store.CreatePlace(ctx, p); err != nil {
-		s.fail(w, err, "create place")
+	var in struct{ Src, ID, Hash string }
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	// the photo itself, from the viewer's library
 	uid := actorID(ctx)
 	var img []byte
 	var ct string
-	var err error
 	switch in.Src {
 	case "photoprism":
-		if pp, _, e := s.photoprismFor(ctx, uid); e == nil {
-			img, ct, err = pp.ThumbnailBytes(ctx, cleanID(in.Hash, isHex), "preview")
+		pp, _, e := s.photoprismFor(ctx, uid)
+		if e != nil {
+			writeErr(w, http.StatusBadRequest, e.Error())
+			return
 		}
+		img, ct, err = pp.ThumbnailBytes(ctx, cleanID(in.Hash, isHex), "preview")
 	default:
-		if im, _, e := s.immichFor(ctx, uid); e == nil {
-			img, ct, err = im.ThumbnailBytes(ctx, cleanID(in.ID, func(c rune) bool { return c == '-' || isHex(c) }), "preview")
+		im, _, e := s.immichFor(ctx, uid)
+		if e != nil {
+			writeErr(w, http.StatusBadRequest, "immich: "+e.Error())
+			return
+		}
+		img, ct, err = im.ThumbnailBytes(ctx, cleanID(in.ID, func(c rune) bool { return c == '-' || isHex(c) }), "preview")
+	}
+	if err != nil || len(img) == 0 || !strings.HasPrefix(ct, "image/") {
+		writeErr(w, http.StatusBadGateway, "could not get the photo from the library")
+		return
+	}
+	rel, err := s.saveFile(t.ID, extOf("", ct), img)
+	if err != nil {
+		s.fail(w, err, "save image")
+		return
+	}
+	if err := s.store.AddPlacePhoto(ctx, &store.PlacePhoto{PlaceID: p.ID, Path: rel, Source: in.Src}); err != nil {
+		s.fail(w, err, "add photo")
+		return
+	}
+	list, _ := s.store.ListPlacePhotos(ctx, p.ID)
+	writeJSON(w, http.StatusCreated, list)
+}
+
+// Sources (a phone, a folder, WhatsApp…) the viewer left out of a trip's
+// photos; kept with the hidden photos as "source:<key>".
+func (s *Server) handleGetPhotoSources(w http.ResponseWriter, r *http.Request) {
+	t := tripFrom(r.Context()).trip
+	hidden, _ := s.store.HiddenPhotos(r.Context(), t.ID, actorID(r.Context()))
+	off := []string{}
+	for k := range hidden {
+		if strings.HasPrefix(k, "source:") {
+			off = append(off, strings.TrimPrefix(k, "source:"))
 		}
 	}
-	if err == nil && len(img) > 0 && strings.HasPrefix(ct, "image/") {
-		if rel, err := s.saveFile(t.ID, extOf("", ct), img); err == nil {
-			_ = s.store.AddPlacePhoto(ctx, &store.PlacePhoto{PlaceID: p.ID, Path: rel, Source: in.Src})
+	sort.Strings(off)
+	writeJSON(w, http.StatusOK, map[string]any{"off": off})
+}
+
+func (s *Server) handlePutPhotoSources(w http.ResponseWriter, r *http.Request) {
+	t := tripFrom(r.Context()).trip
+	uid := actorID(r.Context())
+	var in struct {
+		Off []string `json:"off"`
+	}
+	if err := decode(r, &in); err != nil || len(in.Off) > 200 {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	hidden, _ := s.store.HiddenPhotos(r.Context(), t.ID, uid)
+	var drop, add []string
+	want := map[string]bool{}
+	for _, k := range in.Off {
+		if k = strings.TrimSpace(k); k != "" && len(k) < 200 {
+			want["source:"+k] = true
 		}
 	}
-	s.store.LogActivity(ctx, t.ID, userFrom(ctx).ID, "added place", p.Name)
-	s.store.TouchTrip(ctx, t.ID)
-	p.Photos, _ = s.store.ListPlacePhotos(ctx, p.ID)
-	if p.Photos == nil {
-		p.Photos = []store.PlacePhoto{}
+	for k := range hidden {
+		if strings.HasPrefix(k, "source:") && !want[k] {
+			drop = append(drop, k)
+		}
 	}
-	writeJSON(w, http.StatusCreated, p)
+	for k := range want {
+		if !hidden[k] {
+			add = append(add, k)
+		}
+	}
+	if err := s.store.SetPhotosHidden(r.Context(), t.ID, uid, drop, false); err != nil {
+		s.fail(w, err, "sources")
+		return
+	}
+	if err := s.store.SetPhotosHidden(r.Context(), t.ID, uid, add, true); err != nil {
+		s.fail(w, err, "sources")
+		return
+	}
+	s.handleGetPhotoSources(w, r)
 }

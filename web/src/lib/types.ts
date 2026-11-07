@@ -84,7 +84,7 @@ export const DAY_COLORS = ['#0ea5e9', '#f97316', '#22c55e', '#a855f7', '#ef4444'
 export interface TimelineEntry { type: 'journey' | 'visit'; track_id?: number; visit_id?: number; name?: string; status?: string; started_at: string; ended_at: string; duration: number; distance: number; dominant_mode?: string; avg_speed?: number; elevation_gain?: number; latitude?: number; longitude?: number; point_count?: number }
 export interface TimelineDay { date: string; summary: { total_distance: number; distance_unit: string; places_visited: number; time_moving_minutes: number; time_stationary_minutes: number; mode_distances: Record<string, number> }; entries: TimelineEntry[] }
 /** A photo from the viewer's Immich or PhotoPrism. */
-export interface Photo { id: string; src: 'immich' | 'photoprism'; hash?: string; type: 'IMAGE' | 'VIDEO'; file_name: string; taken_at: string; lat: number | null; lng: number | null; city: string; country: string; thumbhash?: string; favorite: boolean; duration?: string; open?: string; hidden?: boolean; device?: string }
+export interface Photo { id: string; src: 'immich' | 'photoprism'; hash?: string; type: 'IMAGE' | 'VIDEO'; file_name: string; taken_at: string; lat: number | null; lng: number | null; city: string; country: string; thumbhash?: string; favorite: boolean; duration?: string; open?: string; hidden?: boolean; device?: string; folder?: string }
 /** Where found trips start and end: set by hand, or where most photo days are. */
 export interface PhotoHome { name: string; lat: number; lng: number; set: boolean; days: number }
 /** A stretch of days away from home found in the photos, not covered by a trip yet. */

@@ -26,6 +26,8 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	// Progress, when set, hears how many photos a search has seen so far.
+	Progress func(seen int)
 }
 
 // New creates a client.
@@ -179,7 +181,11 @@ func (c *Client) Search(ctx context.Context, from, to string, geoOnly bool, limi
 		}
 	}
 	if geoOnly {
+		// a scan of the whole library: one row per file is fine (photos are
+		// de-duplicated below), and bigger batches mean far fewer round trips
 		q.Set("geo", "true")
+		q.Set("merged", "false")
+		q.Set("count", "1000")
 	}
 	var out []Photo
 	seen := map[string]bool{}
@@ -224,6 +230,9 @@ func (c *Client) Search(ctx context.Context, from, to string, geoOnly bool, limi
 			break
 		}
 		offset += len(page)
+		if c.Progress != nil {
+			c.Progress(len(seen))
+		}
 	}
 	return out, nil
 }

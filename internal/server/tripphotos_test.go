@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 )
 
 // A fake PhotoPrism: Bratislava (home) most days, Rome for four days in May
@@ -164,10 +165,24 @@ func TestPhotoPrismPhotosHiddenAndFoundTrips(t *testing.T) {
 	var res struct {
 		Trips     []PhotoTrip
 		Connected bool
+		State     string
+		Seen      int
+		Located   int
 	}
+	// the scan runs in the background: the first answer says so, later ones
+	// how far it got, then the result
 	c, b = h.do(tok, "GET", "/api/v1/photo-trips?refresh=1", nil)
-	if c != 200 || json.Unmarshal(b, &res) != nil {
-		t.Fatalf("photo-trips %d %s", c, b)
+	if c != 200 || json.Unmarshal(b, &res) != nil || res.State != "scanning" {
+		t.Fatalf("photo-trips start %d %s", c, b)
+	}
+	for i := 0; i < 200 && res.State == "scanning"; i++ {
+		time.Sleep(20 * time.Millisecond)
+		_, b = h.do(tok, "GET", "/api/v1/photo-trips", nil)
+		res.State = ""
+		_ = json.Unmarshal(b, &res)
+	}
+	if res.State != "done" || res.Seen == 0 || res.Located != res.Seen {
+		t.Fatalf("scan did not finish: %s", b)
 	}
 	if !res.Connected || len(res.Trips) != 1 {
 		t.Fatalf("want only Rome, got %s", b)
@@ -246,5 +261,20 @@ func TestFindPhotoTripsMultiCityAndSetHome(t *testing.T) {
 	}
 	if len(trips) == 0 || trips[len(trips)-1].Start != "2025-06-01" {
 		t.Fatalf("with home in Belgrade the Nitra days should be a trip: %+v", trips)
+	}
+}
+
+func TestPhotoFolder(t *testing.T) {
+	for in, want := range map[string]string{
+		"Photos/Camera-Jarka/2025/07": "Photos/Camera-Jarka",
+		"Photos/Camera/2025-07-19":    "Photos/Camera",
+		"/Photos/Camera/":             "Photos/Camera",
+		"2025/07":                     "",
+		"":                            "",
+		"WhatsApp Images":             "WhatsApp Images",
+	} {
+		if got := photoFolder(in); got != want {
+			t.Errorf("photoFolder(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

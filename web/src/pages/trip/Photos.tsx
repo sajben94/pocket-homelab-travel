@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, photoKey, photoThumb, V1 } from '../../lib/api'
-import type { Photo, Place } from '../../lib/types'
+import type { Photo } from '../../lib/types'
 import { fmtDate, plural, weekday } from '../../lib/format'
 import { Empty, Loading, useToast } from '../../components/ui'
 import { Gallery } from '../../components/Gallery'
@@ -12,10 +12,8 @@ const SRC_NAME = { immich: 'Immich', photoprism: 'PhotoPrism' } as const
 /** Photos this far from every place, stay and transport stop of the trip look like they are not from it. */
 const FAR_KM = 60
 
-const OFF_KEY = 'pt.photos.devicesOff'
-function loadOff(): Set<string> {
-  try { return new Set(JSON.parse(localStorage.getItem(OFF_KEY) || '[]')) } catch { return new Set() }
-}
+const APPS = new Set(['WhatsApp', 'Viber', 'Telegram', 'Messenger', 'Signal', 'Screenshots'])
+const lastPart = (f: string) => f.split('/').filter(Boolean).pop() || f
 
 function km(aLat: number, aLng: number, bLat: number, bLng: number) {
   const r = Math.PI / 180, x = Math.sin((bLat - aLat) * r / 2), y = Math.sin((bLng - aLng) * r / 2)
@@ -23,13 +21,20 @@ function km(aLat: number, aLng: number, bLat: number, bLng: number) {
 }
 
 export function Photos() {
-  const { ov, trip, allPhotos, setAllPhotos, photosReady, extErrors, refreshExternal, canEdit, edit, reload } = useTrip()
+  const { ov, trip, allPhotos, setAllPhotos, photosReady, extErrors, refreshExternal, canEdit, edit } = useTrip()
   const { toast } = useToast()
   const [openKey, setOpenKey] = useState<string | null>(null)
-  // sources switched off (another phone, WhatsApp…), remembered on this device for every trip
-  const [off, setOff] = useState<Set<string>>(loadOff)
-  const [made, setMade] = useState<Record<string, Place>>({})
-  const [notice, setNotice] = useState<{ key: string; place: Place } | null>(null)
+  // sources left out of this trip (her phone, WhatsApp…), saved per trip
+  const [off, setOff] = useState<Set<string>>(new Set())
+  useEffect(() => { api.get<{ off: string[] }>(`${V1}/trips/${trip.id}/photos/sources`).then(r => setOff(new Set(r.off))).catch(() => {}) }, [trip.id])
+  // A phone model kept in more than one folder (two of the same phone, each
+  // uploading to its own folder) is split by folder.
+  const splitByFolder = useMemo(() => {
+    const folders = new Map<string, Set<string>>()
+    for (const p of allPhotos) { const d = p.device || 'Unknown camera'; if (!APPS.has(d)) { if (!folders.has(d)) folders.set(d, new Set()); folders.get(d)!.add(p.folder || '') } }
+    return new Set([...folders].filter(([, f]) => f.size > 1).map(([d]) => d))
+  }, [allPhotos])
+  const sourceOf = (p: Photo) => { const d = p.device || 'Unknown camera'; return splitByFolder.has(d) ? `${lastPart(p.folder || '') || 'no folder'} · ${d}` : d }
   const [showHidden, setShowHidden] = useState(false)
   const [selecting, setSelecting] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set())
@@ -62,26 +67,30 @@ export function Photos() {
   const hiddenN = allPhotos.filter(p => p.hidden).length
   const pool = showHidden ? allPhotos : allPhotos.filter(p => !p.hidden)
   const devices = new Map<string, number>()
-  for (const p of pool) devices.set(p.device || 'Unknown camera', (devices.get(p.device || 'Unknown camera') || 0) + 1)
-  const shown = pool.filter(p => !off.has(p.device || 'Unknown camera'))
-  const filtered = pool.filter(p => off.has(p.device || 'Unknown camera'))
-  const toggleDevice = (d: string) => setOff(o => {
-    const n = new Set(o); if (n.has(d)) n.delete(d); else n.add(d)
-    try { localStorage.setItem(OFF_KEY, JSON.stringify([...n])) } catch { /* private mode */ }
-    return n
-  })
+  for (const p of pool) devices.set(sourceOf(p), (devices.get(sourceOf(p)) || 0) + 1)
+  const shown = pool.filter(p => !off.has(sourceOf(p)))
+  const filtered = pool.filter(p => off.has(sourceOf(p)))
+  const saveOff = (n: Set<string>) => {
+    setOff(n)
+    api.put(`${V1}/trips/${trip.id}/photos/sources`, { off: [...n] }).catch(e => toast((e as Error).message, 'err'))
+  }
+  const toggleDevice = (d: string) => { const n = new Set(off); if (n.has(d)) n.delete(d); else n.add(d); saveOff(n) }
   const byDay = new Map<string, Photo[]>()
   for (const p of shown) { const d = p.taken_at.slice(0, 10); byDay.set(d, [...(byDay.get(d) || []), p]) }
   const libs = [...new Set(allPhotos.map(p => SRC_NAME[p.src || 'immich']))].join(' and ')
   const idx = openKey ? shown.findIndex(p => photoKey(p) === openKey) : -1
 
-  // a visited place where the photo was taken (trips written after the fact)
+  // the place form, filled in from where and when the photo was taken (the
+  // name from the map); the photo is attached when the place is saved
   const makePlace = async (p: Photo) => {
     setBusy(true)
     try {
-      const pl = await api.post<Place>(`${V1}/trips/${trip.id}/places/from-photo`, { src: p.src, id: p.id, hash: p.hash, lat: p.lat, lng: p.lng, taken_at: p.taken_at, city: p.city })
-      setMade(m => ({ ...m, [photoKey(p)]: pl })); setNotice({ key: photoKey(p), place: pl })
-      reload()
+      const g = await api.get<{ name?: string; address?: string; category?: string; country_code?: string }>(`${V1}/trips/${trip.id}/places/from-photo?lat=${p.lat}&lng=${p.lng}`)
+      edit('place', undefined, {
+        name: g.name || p.city || '', address: g.address || '', lat: p.lat, lng: p.lng, ...(g.category ? { category: g.category } : {}),
+        status: 'visited', day_date: p.taken_at.slice(0, 10), start_time: p.taken_at.slice(11, 16), visited_at: p.taken_at.slice(0, 10),
+        _photo: { src: p.src, id: p.id, hash: p.hash || '' },
+      })
     } catch (e) { toast((e as Error).message, 'err') } finally { setBusy(false) }
   }
 
@@ -114,11 +123,11 @@ export function Photos() {
         <div className="photo-devices" role="group" aria-label="Which phone or app">
           {[...devices.entries()].sort((a, b) => b[1] - a[1]).map(([d, n]) => (
             <button key={d} type="button" className={`chip ${off.has(d) ? 'off' : 'active'}`} aria-pressed={!off.has(d)} title={off.has(d) ? 'Show these again' : 'Leave these out'} onClick={() => toggleDevice(d)}>
-              <Icon name={d === 'WhatsApp' || d === 'Viber' || d === 'Telegram' || d === 'Messenger' || d === 'Signal' ? 'send' : d === 'Screenshots' ? 'image' : 'camera'} size={13} />{d}<span className="n">{n}</span>
+              <Icon name={d === 'Screenshots' ? 'image' : APPS.has(d) ? 'send' : 'camera'} size={13} />{d}<span className="n">{n}</span>
             </button>
           ))}
           {filtered.length > 0 && <>
-            <button type="button" className="link-btn small" onClick={() => { setOff(new Set()); try { localStorage.removeItem(OFF_KEY) } catch { /* */ } }}>Show all</button>
+            <button type="button" className="link-btn small" onClick={() => saveOff(new Set())}>Show all</button>
             <button type="button" className="link-btn small" disabled={busy} onClick={() => setHidden(filtered.filter(p => !p.hidden).map(photoKey), true)} title="Hide them from this trip for good (also on the map and overview)">Hide these {filtered.filter(p => !p.hidden).length} from the trip</button>
           </>}
         </div>
@@ -135,7 +144,7 @@ export function Photos() {
             const k = photoKey(p), on = sel.has(k)
             return (
               <a key={k} href={p.open || '#'} className={`${p.hidden ? 'is-hidden' : ''} ${on ? 'is-sel' : ''}`} aria-pressed={selecting ? on : undefined}
-                onClick={e => { e.preventDefault(); if (selecting) toggle(p); else { setNotice(null); setOpenKey(k) } }}>
+                onClick={e => { e.preventDefault(); if (selecting) toggle(p); else setOpenKey(k) }}>
                 <img src={photoThumb(p)} loading="lazy" alt={p.file_name} />
                 {p.type === 'VIDEO' && <span className="vid"><Icon name="play" size={9} />{p.duration?.slice(3, 8)}</span>}
                 {p.favorite && <span className="vid"><Icon name="heart" size={10} /></span>}
@@ -156,12 +165,9 @@ export function Photos() {
         </div>
       )}
       {idx >= 0 && (
-        <Gallery photos={shown} index={idx} onIndex={i => { setNotice(null); setOpenKey(photoKey(shown[i])) }} onClose={() => setOpenKey(null)}
-          notice={notice && notice.key === openKey && <><Icon name="check" size={14} />Added “{notice.place.name}” to the trip's places<button type="button" className="link-btn" onClick={() => { const pl = notice.place; setOpenKey(null); edit('place', pl) }}>Edit</button></>}
+        <Gallery photos={shown} index={idx} onIndex={i => setOpenKey(photoKey(shown[i]))} onClose={() => setOpenKey(null)}
           actions={p => <>
-            {canEdit && (made[photoKey(p)]
-              ? <button type="button" className="btn sm" onClick={() => { const pl = made[photoKey(p)]; setOpenKey(null); edit('place', pl) }}><Icon name="check" size={14} />Place added</button>
-              : <button type="button" className="btn sm" disabled={busy || p.lat == null} title={p.lat == null ? 'This photo has no location' : 'A visited place here, on this day, with this photo'} onClick={() => makePlace(p)}><Icon name="pin" size={14} />Create place</button>)}
+            {canEdit && <button type="button" className="btn sm" disabled={busy || p.lat == null} title={p.lat == null ? 'This photo has no location' : 'A place here, on this day, with this photo'} onClick={() => makePlace(p)}><Icon name="pin" size={14} />{busy ? 'Looking up…' : 'Create place'}</button>}
             <button type="button" className="btn sm" disabled={busy} onClick={async () => {
               const k = photoKey(p)
               if (!p.hidden && !showHidden) { const nx = shown[idx + 1] || shown[idx - 1]; await setHidden([k], true); setOpenKey(nx && photoKey(nx) !== k ? photoKey(nx) : null) }

@@ -747,7 +747,7 @@ button.bal-row.sel { background: color-mix(in srgb, var(--accent) 10%, var(--sur
 }
 
 /* ---------- full-screen photo viewer ---------- */
-.photo-viewer { position: fixed; inset: 0; z-index: 900; background: #000; color: #fff; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; user-select: none; -webkit-user-select: none; }
+.photo-viewer { position: fixed; inset: 0; z-index: 290; background: #000; color: #fff; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; user-select: none; -webkit-user-select: none; }
 .gal-top { display: flex; align-items: center; gap: 12px; padding: 10px 14px; padding-top: max(10px, env(safe-area-inset-top)); background: linear-gradient(rgba(0,0,0,.75), rgba(0,0,0,.35)); position: relative; z-index: 2; transition: opacity .2s; }
 .gal-title { display: grid; min-width: 0; flex: 1; line-height: 1.3; }
 .gal-title b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -788,3 +788,7 @@ button.bal-row.sel { background: color-mix(in srgb, var(--accent) 10%, var(--sur
 .photo-devices { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .photo-devices .chip.off { opacity: .5; text-decoration: line-through; }
 .photo-devices .chip .n { color: var(--muted); font-size: 11.5px; margin-left: 2px; }
+.lib-photo { gap: 10px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.lib-photo img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+.scan-progress { display: flex; gap: 12px; align-items: flex-start; padding: 4px 2px; }
+.scan-progress .spinner { margin-top: 3px; }
