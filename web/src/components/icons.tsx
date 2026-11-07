@@ -100,6 +100,7 @@ const P: Record<string, string> = {
   tag: 'M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01',
   route: 'M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6 15V9a4 4 0 0 1 4-4h2M18 9v6a4 4 0 0 1-4 4h-2',
   archive: 'M21 8v13H3V8M1 3h22v5H1zM10 12h4',
+  mountain: 'M8 3l4 8 5-5 5 15H2L8 3z',
 }
 
 export type IconName = keyof typeof P | string

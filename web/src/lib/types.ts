@@ -106,6 +106,10 @@ export interface Settings {
   immich_mode: ConnMode; immich_via: '' | 'core' | 'direct'; immich_detail: string; immich_source: '' | 'personal' | 'box'
   /** Pocket Places on the trip page: through Pocket Core only */
   places_mode: 'core' | 'off'; places_via: '' | 'core'; places_detail: string
+  /** Pocket Wallet's tickets and boarding passes on the trip page: through Pocket Core only */
+  wallet_mode: 'core' | 'off'; wallet_via: '' | 'core'; wallet_detail: string
+  /** Pocket Trails' outings on the trip page: through Pocket Core only */
+  trails_mode: 'core' | 'off'; trails_via: '' | 'core'; trails_detail: string
   firefly_url: string; firefly_token: string; firefly_configured: boolean
   dawarich_url: string; dawarich_api_key: string; dawarich_configured: boolean
   immich_url: string; immich_public_url: string; immich_api_key: string; immich_configured: boolean
@@ -123,6 +127,27 @@ export interface PocketPlaces {
   status: 'ok' | 'no_core' | 'off' | 'unavailable' | 'error'; reason?: string; detail?: string
   places_url?: string; trip_url?: string
   lists: PPList[]; want: PPPlace[]; been: PPPlace[]; visits: PPVisit[]; spent: { currency: string; total: number; visits: number }[]
+}
+/** A ticket or boarding pass from Pocket Wallet; times are local where they happen ("2026-12-01T06:40"). */
+export interface PWPass {
+  id: number; kind: 'ticket' | 'boarding' | string; name: string; issuer: string; starts_at: string; ends_at: string
+  venue: string; destination: string; seat: string; gate: string; ref: string; holder: string; has_code: boolean; trip_id: number | null; archived: boolean
+}
+export interface PocketWallet {
+  /** ok, or why there is nothing: no_core (no Pocket Core), off (switched off in Settings), unavailable (Core refused the link), error (no answer) */
+  status: 'ok' | 'no_core' | 'off' | 'unavailable' | 'error'; reason?: string; detail?: string
+  wallet_url?: string; passes: PWPass[]
+}
+/** A hike, ride or other outing from Pocket Trails; distances and heights in metres. */
+export interface PTOuting {
+  id: number; title: string; activity: string; date: string; start_time: string; back_by: string
+  status: 'planned' | 'out' | 'done' | 'cancelled' | string; route_name: string; distance_m: number; gain_m: number; minutes: number
+  trip_ref: string; trip_name: string
+}
+export interface PocketTrails {
+  /** ok, or why there is nothing: no_core (no Pocket Core), off (switched off in Settings), unavailable (Core refused the link), error (no answer) */
+  status: 'ok' | 'no_core' | 'off' | 'unavailable' | 'error'; reason?: string; detail?: string
+  trails_url?: string; outings: PTOuting[]
 }
 export interface Meta { place_categories: string[]; expense_categories: string[]; discover_categories: string[]; packing_templates: string[]; lodging_types: string[]; transport_types: string[] }
 export interface HomeData {

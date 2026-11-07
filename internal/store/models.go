@@ -346,7 +346,13 @@ type Settings struct {
 	LocationSource string `json:"location_source"`
 	// Pocket Places on the trip page (through Pocket Core only): core | off;
 	// "" = core.
-	PlacesMode    string `json:"places_mode"`
+	PlacesMode string `json:"places_mode"`
+	// Pocket Wallet's tickets and boarding passes on the trip page (through
+	// Pocket Core only): core | off; "" = core.
+	WalletMode string `json:"wallet_mode"`
+	// Pocket Trails' outings on the trip page (through Pocket Core only):
+	// core | off; "" = core.
+	TrailsMode    string `json:"trails_mode"`
 	OpenAIKey     string `json:"openai_api_key"`
 	OpenAIModel   string `json:"openai_model"`
 	OpenAIBaseURL string `json:"openai_base_url"` // any OpenAI-compatible endpoint

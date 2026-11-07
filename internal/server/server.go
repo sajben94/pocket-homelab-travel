@@ -234,7 +234,7 @@ func (s *Server) registerWithCore(ctx context.Context) error {
 		URL: s.cfg.CoreAppURL, PublicURL: s.cfg.BaseURL, HealthPath: "/healthz", EnvPrefix: "TRAVEL",
 		Publishes: []string{"travel.trip_created", "travel.trip_updated", "travel.expense_linked"},
 		Offers:    linkOffers,
-		Uses:      append(append(append(append([]core.Use{}, moneyUses...), movementUses...), placesUses...), core.InferenceUse()),
+		Uses:      append(append(append(append(append(append([]core.Use{}, moneyUses...), movementUses...), placesUses...), walletUses...), trailsUses...), core.InferenceUse()),
 		Services:  serviceUses,
 	}
 	// Ask Core for a relying-party client so "Sign in with Pocket Core" needs no configuration.
@@ -473,6 +473,8 @@ func (s *Server) Router() http.Handler {
 				r.Get("/dawarich/timeline", s.handleTimeline)
 				r.Get("/photos", s.handleTripPhotos)
 				r.Get("/pocket-places", s.handleTripPocketPlaces)
+				r.Get("/pocket-wallet", s.handleTripPocketWallet)
+				r.Get("/pocket-trails", s.handleTripPocketTrails)
 				r.Get("/photos/{id}/thumb", s.handlePhotoThumb)
 				r.Put("/photos/hidden", s.handleHidePhotos)
 				r.Get("/places/from-photo", s.handlePlaceFromPhotoSuggest)

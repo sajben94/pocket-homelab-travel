@@ -13,6 +13,8 @@ import { useTrip } from './ctx'
 import { PeopleStrip } from './TripPeople'
 import { RecapModal } from './ai'
 import { PocketPlacesCard } from './PocketPlaces'
+import { PocketWalletCard } from './PocketWallet'
+import { PocketTrailsCard } from './PocketTrails'
 import { useState } from 'react'
 
 
@@ -116,7 +118,9 @@ export function OverviewTab() {
       {trip.description && <Card title="About this trip" className="span2"><p style={{ whiteSpace: 'pre-wrap' }}>{trip.description}</p>{trip.link && <a href={trip.link} target="_blank" rel="noreferrer">{trip.link}</a>}</Card>}
       {trip.notes && <Card title="Notes" className="span2"><p style={{ whiteSpace: 'pre-wrap' }}>{trip.notes}</p></Card>}
       {!integ.firefly.configured && !integ.dawarich.configured && !integ.immich.configured && <Card title="Connect your other apps" className="span2"><p className="muted">Connect <b>Pocket Money</b> to see what the trip really cost, <b>Pocket Movement</b> (through Pocket Core) or <b>Dawarich</b> for the route you actually took, and <b>Immich</b> for the photos — all under <Link to="/settings/integrations">Settings → Integrations</Link>.</p></Card>}
-      {/* last, so it never pushes the cards above it while it loads */}
+      {/* last, so they never push the cards above them while they load */}
+      <PocketWalletCard />
+      <PocketTrailsCard />
       <PocketPlacesCard />
     </div>
     </>

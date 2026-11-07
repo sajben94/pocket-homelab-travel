@@ -20,7 +20,7 @@ type TabId = 'general' | 'integrations' | 'import' | 'profile' | 'users' | 'api'
 
 const TABS: { id: TabId; label: string; icon: string; sub: string }[] = [
   { id: 'general', label: 'General', icon: 'settings', sub: 'Currency, distances, maps, date and time formats, and the app title.' },
-  { id: 'integrations', label: 'Integrations', icon: 'layers', sub: 'Pocket Money, Pocket Movement or Dawarich, Pocket Places, Immich and OpenAI — your own accounts, through Pocket Core or directly.' },
+  { id: 'integrations', label: 'Integrations', icon: 'layers', sub: 'Pocket Money, Pocket Movement or Dawarich, Pocket Places, Pocket Wallet, Pocket Trails, Immich or PhotoPrism and OpenAI — your own accounts, through Pocket Core or directly.' },
   { id: 'import', label: 'Import', icon: 'download', sub: 'Bring projects over from Nextcloud Cospend, collections from AdventureLog, or restore a trip from a JSON backup.' },
   { id: 'profile', label: 'Profile', icon: 'user', sub: 'Your name, email and password.' },
   { id: 'users', label: 'People', icon: 'users', sub: 'Everyone who has an account on this box.' },
@@ -175,7 +175,7 @@ function Integrations() {
   const { f, setF, save, busy } = useSettingsForm()
   const [test, setTest] = useState<Record<string, string>>({})
   if (!f) return <Loading />
-  const run = async (which: 'money' | 'movement' | 'dawarich' | 'places' | 'immich' | 'photoprism' | 'openai', url: string, key: string) => {
+  const run = async (which: 'money' | 'movement' | 'dawarich' | 'places' | 'wallet' | 'trails' | 'immich' | 'photoprism' | 'openai', url: string, key: string) => {
     setTest(t => ({ ...t, [which]: 'testing…' }))
     try { const r = await api.post<{ ok: boolean; message?: string; error?: string }>(`${V1}/integrations/test`, { which, url, key }); setTest(t => ({ ...t, [which]: r.ok ? `✓ ${r.message}` : `✕ ${r.error}` })) } catch (e) { setTest(t => ({ ...t, [which]: `✕ ${(e as Error).message}` })) }
   }
@@ -202,7 +202,7 @@ function Integrations() {
   )
   return (
     <div className="stack loose">
-      <div className="callout info"><Icon name="info" size={15} /><span>These are your own accounts. Each person connects their own Pocket Money, Pocket Movement or Dawarich, Pocket Places, Immich or PhotoPrism and OpenAI (through Pocket Core, with your own key there, or directly); nobody else on this box uses yours. On a trip shared with you, the route and photos come from your accounts and the spending from the trip owner's Pocket Money.</span></div>
+      <div className="callout info"><Icon name="info" size={15} /><span>These are your own accounts. Each person connects their own Pocket Money, Pocket Movement or Dawarich, Pocket Places, Pocket Wallet, Pocket Trails, Immich or PhotoPrism and OpenAI (through Pocket Core, with your own key there, or directly); nobody else on this box uses yours. On a trip shared with you, the route and photos come from your accounts and the spending from the trip owner's Pocket Money.</span></div>
       <Section title="Pocket Money" icon="wallet" actions={connBadge(shownMode(f.money_mode, f.core_ready), f.money_via)} sub={<>What the trip really cost. Tag the expenses in Pocket Money (e.g. "lisbon 2027") and set the same Money tag on the trip; they appear as spent, in their own currency, converted at the day's rate. Synced every 30 minutes while a trip is running or upcoming, and on demand.</>}>
         <Connection app="Pocket Money" mode={f.money_mode} via={f.money_via} detail={f.money_detail} core={f.core_ready} hasToken={!!f.firefly_token}
           onMode={m => save({ money_mode: m })} onDisconnect={() => save({ firefly_url: '', firefly_token: '' })}
@@ -218,6 +218,16 @@ function Integrations() {
         <Connection app="Pocket Places" coreOnly mode={f.places_mode} via={f.places_via} detail={f.places_detail} core={f.core_ready} hasToken={false}
           onMode={m => save({ places_mode: m === 'off' ? 'off' : 'core' })} onDisconnect={() => {}}
           test={<><button type="button" className="btn sm" onClick={() => run('places', '', '')}>Test Pocket Places</button>{status('places')}</>} direct={null} />
+      </Section>
+      <Section title="Pocket Wallet" icon="ticket" actions={connBadge(f.wallet_mode, f.wallet_via)} sub="On each trip's page: your boarding passes and tickets for the trip, by date and time, each ready to open full screen at the gate. Read from your own Pocket Wallet; nothing is changed there.">
+        <Connection app="Pocket Wallet" coreOnly mode={f.wallet_mode} via={f.wallet_via} detail={f.wallet_detail} core={f.core_ready} hasToken={false}
+          onMode={m => save({ wallet_mode: m === 'off' ? 'off' : 'core' })} onDisconnect={() => {}}
+          test={<><button type="button" className="btn sm" onClick={() => run('wallet', '', '')}>Test Pocket Wallet</button>{status('wallet')}</>} direct={null} />
+      </Section>
+      <Section title="Pocket Trails" icon="mountain" actions={connBadge(f.trails_mode, f.trails_via)} sub="On each trip's page: an Outdoors card with the hikes and rides you filed with the trip in Pocket Trails or planned during its dates, with distance, climb and status, each opening in Trails. Read from your own Pocket Trails; nothing is changed there.">
+        <Connection app="Pocket Trails" coreOnly mode={f.trails_mode} via={f.trails_via} detail={f.trails_detail} core={f.core_ready} hasToken={false}
+          onMode={m => save({ trails_mode: m === 'off' ? 'off' : 'core' })} onDisconnect={() => {}}
+          test={<><button type="button" className="btn sm" onClick={() => run('trails', '', '')}>Test Pocket Trails</button>{status('trails')}</>} direct={null} />
       </Section>
       {block('immich', 'Immich', 'camera', 'Immich', 'immich_url', 'immich_api_key', 'Every photo and video taken between the trip dates, grouped by day; the geotagged ones land on the map. Thumbnails are proxied so the browser never sees the key.', 'Immich → Account settings → API keys.')}
       <Section title="PhotoPrism" icon="camera" actions={<span className={`badge ${f.photoprism_configured ? 'ok' : ''}`}>{f.photoprism_configured ? 'connected' : 'not set'}</span>}
