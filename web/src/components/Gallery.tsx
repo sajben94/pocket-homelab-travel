@@ -9,12 +9,14 @@ import { Icon } from './icons'
  * Full-screen photo viewer, like a phone's gallery: ← → keys, tap the left or
  * right part of the photo, swipe, Esc closes; a strip of thumbnails below.
  */
-export function Gallery({ photos, index, onIndex, onClose, actions, notice }: {
+export function Gallery({ photos, index, onIndex, onClose, actions, notice, overModal }: {
   photos: Photo[]; index: number; onIndex: (i: number) => void; onClose: () => void
   /** buttons for the photo shown (top right) */
   actions?: (p: Photo) => React.ReactNode
   /** a line shown over the photo (e.g. "Added Colosseum · Edit") */
   notice?: React.ReactNode
+  /** opened from a dialog: shows above it and takes the keys first */
+  overModal?: boolean
 }) {
   const p = photos[index]
   const [loaded, setLoaded] = useState('')
@@ -29,14 +31,16 @@ export function Gallery({ photos, index, onIndex, onClose, actions, notice }: {
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const h = (e: KeyboardEvent) => {
-      if (document.querySelector('.modal-backdrop')) return // a dialog on top has the keys
+      if (!overModal && document.querySelector('.modal-backdrop')) return // a dialog on top has the keys
       if (e.key === 'ArrowRight') { e.preventDefault(); goRef.current(1) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); goRef.current(-1) }
       else if (e.key === 'Escape') { e.preventDefault(); closeRef.current() }
+      else return
+      if (overModal) e.stopImmediatePropagation() // Esc closes the viewer, not the dialog under it
     }
-    window.addEventListener('keydown', h)
-    return () => { window.removeEventListener('keydown', h); document.body.style.overflow = prev }
-  }, [])
+    window.addEventListener('keydown', h, overModal)
+    return () => { window.removeEventListener('keydown', h, overModal); document.body.style.overflow = prev }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   // the neighbours load ahead; the strip keeps the current one in view
   useEffect(() => {
     for (const n of [index + 1, index - 1, index + 2]) if (photos[n]) new Image().src = photoThumb(photos[n], 'preview')
@@ -63,7 +67,7 @@ export function Gallery({ photos, index, onIndex, onClose, actions, notice }: {
   }
 
   return createPortal(
-    <div className={`photo-viewer ${chrome ? '' : 'bare'}`} role="dialog" aria-modal="true" aria-label="Photo viewer">
+    <div className={`photo-viewer ${chrome ? '' : 'bare'} ${overModal ? 'over-modal' : ''}`} role="dialog" aria-modal="true" aria-label="Photo viewer">
       <div className="gal-top">
         <button type="button" className="gal-btn" onClick={onClose} aria-label="Close (Esc)"><Icon name="x" size={20} /></button>
         <div className="gal-title">

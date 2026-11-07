@@ -792,3 +792,27 @@ button.bal-row.sel { background: color-mix(in srgb, var(--accent) 10%, var(--sur
 .lib-photo img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
 .scan-progress { display: flex; gap: 12px; align-items: flex-start; padding: 4px 2px; }
 .scan-progress .spinner { margin-top: 3px; }
+.photo-viewer.over-modal { z-index: 320; }
+
+/* review a trip found in the photos */
+.review-days { display: grid; gap: 6px; }
+.review-day { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.review-day.in { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.review-day.out { opacity: .72; }
+.rd-date { display: grid; gap: 3px; font-size: 13px; }
+.rd-pill { justify-self: start; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.rd-pill.away { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-ink); }
+.rd-pill.home { background: color-mix(in srgb, #16a34a 16%, transparent); color: #15803d; }
+[data-theme="dark"] .rd-pill.home { color: #4ade80; }
+.rd-where { font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-thumbs { display: flex; gap: 3px; }
+.rd-thumbs button { width: 38px; height: 38px; padding: 0; border: 0; border-radius: 5px; overflow: hidden; background: var(--surface-2); cursor: pointer; flex: none; }
+.rd-thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rd-thumbs .rd-more { font-size: 11px; color: var(--muted); }
+.rd-actions { display: flex; gap: 4px; justify-content: flex-end; min-width: 150px; }
+@media (max-width: 760px) {
+  .review-day { grid-template-columns: minmax(0, 1fr) auto; }
+  .rd-where { grid-column: 1 / -1; white-space: normal; }
+  .rd-thumbs { grid-column: 1 / -1; overflow-x: auto; }
+  .rd-actions { grid-column: 1 / -1; justify-content: flex-start; min-width: 0; }
+}

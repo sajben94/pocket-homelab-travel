@@ -39,6 +39,7 @@ Synced expenses have `source` `money` or `firefly` (direct connection to a real 
 | PUT | `/trips/{id}/photos/hidden` | `{"photos": ["immich:<id>", "photoprism:<uid>"], "hidden": true}`: hide from the trip (per viewer) or show again |
 | GET | `/photos/{id}/thumb?size=thumbnail\|preview` | Proxied thumbnail (Immich asset id; PhotoPrism: `&src=photoprism&h=<file hash>`). `/trips/{id}/photos/{id}/thumb` works too |
 | GET | `/photo-trips?refresh=1` | Trips found in the viewer's photo locations and dates that no trip covers yet. Scans run in the background: `state` is `scanning` (with `seen`, photos so far), `done` (with `trips`, `home`) or `error`; ask again until done. The result is kept a day |
+| GET | `/photo-trips/preview?start=&end=` | A found trip day by day with three days on each side: photos, where, km from home, away or not, a few photos per day |
 | POST | `/photo-trips/dismiss` | `{"start_date": "2025-05-01"}`: "not a trip" |
 | GET | `/trips/{id}/places/from-photo?lat=&lng=` | Name, address and category for a place where a photo was taken (OpenStreetMap); nothing is saved |
 | POST | `/trips/{id}/places/{pid}/photos/from-library` | `{"src","id","hash"}`: attach a photo from the viewer's Immich or PhotoPrism to a place |

@@ -862,3 +862,142 @@ func (s *Server) handlePutPhotoSources(w http.ResponseWriter, r *http.Request) {
 	}
 	s.handleGetPhotoSources(w, r)
 }
+
+// PreviewDay is one day around a found trip, for checking it before it is
+// added: how many photos, where, and whether it counts as away from home.
+type PreviewDay struct {
+	Date      string      `json:"date"`
+	Photos    int         `json:"photos"`
+	Located   int         `json:"located"`
+	Away      bool        `json:"away"`
+	Km        int         `json:"km"` // farthest photo from home that day
+	Cities    []string    `json:"cities"`
+	Countries []string    `json:"countries"`
+	Lat       *float64    `json:"lat,omitempty"` // where most of the day's photos are
+	Lng       *float64    `json:"lng,omitempty"`
+	Sample    []tripPhoto `json:"sample"` // a few, spread over the day
+	All       []tripPhoto `json:"all"`
+}
+
+// handlePhotoTripPreview shows the days of a found trip with three on each
+// side, so a trip found a day off (a home morning, a late return) can be
+// moved before it is added.
+func (s *Server) handlePhotoTripPreview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	u := userFrom(ctx)
+	start, err1 := time.Parse("2006-01-02", r.URL.Query().Get("start"))
+	end, err2 := time.Parse("2006-01-02", r.URL.Query().Get("end"))
+	if err1 != nil || err2 != nil || end.Before(start) || end.Sub(start) > 120*24*time.Hour {
+		writeErr(w, http.StatusBadRequest, "start and end dates are required")
+		return
+	}
+	from, to := start.AddDate(0, 0, -3), end.AddDate(0, 0, 3)
+	fromS, toS := from.Format("2006-01-02"), to.Format("2006-01-02")
+	var photos []tripPhoto
+	var errs []string
+	if pp, public, err := s.photoprismFor(ctx, u.ID); err == nil {
+		ps, err := pp.Search(ctx, fromS, toS, false, 5000)
+		if err != nil {
+			errs = append(errs, "PhotoPrism: "+err.Error())
+		}
+		for _, p := range ps {
+			photos = append(photos, fromPhotoPrism(p, public))
+		}
+	}
+	if im, conn, err := s.immichFor(ctx, u.ID); err == nil {
+		as, err := im.Search(ctx, from.AddDate(0, 0, -1), to.AddDate(0, 0, 2), 5000)
+		if err != nil {
+			errs = append(errs, "Immich: "+err.Error())
+		}
+		for _, a := range as {
+			if len(a.TakenAt) >= 10 && a.TakenAt[:10] >= fromS && a.TakenAt[:10] <= toS {
+				photos = append(photos, fromImmich(a, conn.public))
+			}
+		}
+	}
+	if len(photos) == 0 && len(errs) > 0 {
+		writeErr(w, http.StatusBadGateway, strings.Join(errs, "; "))
+		return
+	}
+	sort.SliceStable(photos, func(i, j int) bool { return photos[i].TakenAt < photos[j].TakenAt })
+	// home: set by hand, else the one the last scan detected
+	var home *PhotoHome
+	if st, _ := s.store.GetSettings(ctx, u.ID); st.HomeLat != nil && st.HomeLng != nil {
+		home = &PhotoHome{Name: st.HomeName, Lat: *st.HomeLat, Lng: *st.HomeLng, Set: true}
+	} else if v, _, ok := s.store.CacheGet(ctx, photoTripsKey(u.ID)); ok {
+		var c struct{ Home PhotoHome }
+		if json.Unmarshal([]byte(v), &c) == nil && (c.Home.Lat != 0 || c.Home.Lng != 0) {
+			home = &c.Home
+		}
+	}
+	byDay := map[string][]tripPhoto{}
+	for _, p := range photos {
+		if len(p.TakenAt) >= 10 {
+			byDay[p.TakenAt[:10]] = append(byDay[p.TakenAt[:10]], p)
+		}
+	}
+	days := []PreviewDay{}
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		ds := d.Format("2006-01-02")
+		ps := byDay[ds]
+		day := PreviewDay{Date: ds, Photos: len(ps), Cities: []string{}, Countries: []string{}, Sample: []tripPhoto{}, All: ps}
+		if day.All == nil {
+			day.All = []tripPhoto{}
+		}
+		cities, ctry := map[string]int{}, map[string]int{}
+		var lats, lngs []float64
+		far := 0
+		for _, p := range ps {
+			if p.City != "" {
+				cities[p.City]++
+			}
+			if p.Country != "" {
+				ctry[p.Country]++
+			}
+			if p.Lat == nil || p.Lng == nil {
+				continue
+			}
+			day.Located++
+			lats, lngs = append(lats, *p.Lat), append(lngs, *p.Lng)
+			if home != nil {
+				km := distKm(home.Lat, home.Lng, *p.Lat, *p.Lng)
+				if int(km) > day.Km {
+					day.Km = int(km)
+				}
+				if km > awayKm {
+					far++
+				}
+			}
+		}
+		day.Away = far > 0 && far*10 >= day.Located*3 // the rule trips are found by
+		day.Cities, day.Countries = topKeys(cities, 3), topKeys(ctry, 3)
+		if len(lats) > 0 { // the middle photo's spot, not an average across a travel day
+			sort.Float64s(lats)
+			sort.Float64s(lngs)
+			la, lo := lats[len(lats)/2], lngs[len(lngs)/2]
+			day.Lat, day.Lng = &la, &lo
+		}
+		for i := 0; i < 6 && i < len(ps); i++ {
+			day.Sample = append(day.Sample, ps[i*len(ps)/min(6, len(ps))])
+		}
+		days = append(days, day)
+	}
+	out := map[string]any{"days": days, "home": home, "start_date": start.Format("2006-01-02"), "end_date": end.Format("2006-01-02")}
+	if len(errs) > 0 {
+		out["warning"] = strings.Join(errs, "; ")
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// topKeys are the n most frequent keys, most frequent first.
+func topKeys(m map[string]int, n int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return m[keys[i]] > m[keys[j]] || m[keys[i]] == m[keys[j]] && keys[i] < keys[j] })
+	if len(keys) > n {
+		keys = keys[:n]
+	}
+	return keys
+}

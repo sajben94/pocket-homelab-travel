@@ -194,6 +194,36 @@ func TestPhotoPrismPhotosHiddenAndFoundTrips(t *testing.T) {
 	if f.Km < 700 || f.Km > 900 {
 		t.Fatalf("km from home %d", f.Km)
 	}
+	// the preview: the trip's days with three on each side, each said to be
+	// home, away or without photos
+	var pv struct {
+		Days []PreviewDay
+		Home *PhotoHome
+	}
+	c, b = h.do(tok, "GET", "/api/v1/photo-trips/preview?start=2025-05-01&end=2025-05-04", nil)
+	if c != 200 || json.Unmarshal(b, &pv) != nil || len(pv.Days) != 10 || pv.Home == nil {
+		t.Fatalf("preview %d %.300s", c, b)
+	}
+	byDate := map[string]PreviewDay{}
+	for _, d := range pv.Days {
+		byDate[d.Date] = d
+	}
+	if d := byDate["2025-04-28"]; d.Away || d.Photos != 2 || d.Km > 5 || len(d.Cities) != 1 || d.Cities[0] != "Bratislava" {
+		t.Fatalf("home day before: %+v", d)
+	}
+	if d := byDate["2025-05-02"]; !d.Away || d.Photos != 10 || d.Km < 700 || d.Lat == nil || len(d.Sample) != 6 || len(d.All) != 10 {
+		t.Fatalf("away day: %+v", d)
+	}
+	if d := byDate["2025-05-01"]; !d.Away || d.Photos != 9 { // 3 at home in the morning, 6 in Rome
+		t.Fatalf("travel day: %+v", d)
+	}
+	if d := byDate["2025-05-03"]; d.Photos != 0 || d.Away {
+		t.Fatalf("day without photos: %+v", d)
+	}
+	if d := byDate["2025-05-05"]; d.Away || d.Photos != 2 {
+		t.Fatalf("back home: %+v", d)
+	}
+
 	// dismissed: gone, from the cache too
 	h.do(tok, "POST", "/api/v1/photo-trips/dismiss", map[string]any{"start_date": "2025-05-01"})
 	_, b = h.do(tok, "GET", "/api/v1/photo-trips", nil)

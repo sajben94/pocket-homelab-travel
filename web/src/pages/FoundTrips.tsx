@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, photoThumb, V1 } from '../lib/api'
-import type { PhotoHome, PhotoTrip, Settings, Trip } from '../lib/types'
-import { fmtRange, plural, todayISO } from '../lib/format'
+import { api, photoKey, photoThumb, V1 } from '../lib/api'
+import type { Photo, PhotoHome, PhotoTrip, Settings, Trip } from '../lib/types'
+import { daysBetween, fmtDate, fmtRange, plural, todayISO, weekday } from '../lib/format'
 import { flag, countryName } from '../lib/countries'
 import { Icon } from '../components/icons'
-import { Card, Modal, useToast } from '../components/ui'
+import { Card, Field, Loading, Modal, useToast } from '../components/ui'
+import { MapView } from '../components/Map'
+import { Gallery } from '../components/Gallery'
 import { GeoSearch } from '../components/GeoSearch'
 import { useApp } from '../lib/app-context'
 
@@ -26,6 +28,7 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
   const [busy, setBusy] = useState('')
   const [home, setHome] = useState<PhotoHome | null>(null)
   const [editHome, setEditHome] = useState(false)
+  const [review, setReview] = useState<PhotoTrip | null>(null)
 
   type Answer = { state: 'scanning' | 'done' | 'error'; trips?: PhotoTrip[]; home?: PhotoHome; seen?: number; located?: number; scanned_at?: string; error?: string; connected: boolean }
   const load = async (refresh = false) => {
@@ -50,13 +53,13 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
     setBusy(f.start_date)
     try {
       const t = await api.post<Trip>(`${V1}/trips`, { name: f.name, destination: f.destination, start_date: f.start_date, end_date: f.end_date, lat: f.lat, lng: f.lng, status: f.end_date < todayISO() ? 'completed' : 'active' })
-      reloadTrips(); onAdded(); toast(`${f.name} added`)
+      setReview(null); reloadTrips(); onAdded(); toast(`${f.name} added`)
       navigate(`/trips/${t.id}`)
     } catch (e) { toast((e as Error).message, 'err') } finally { setBusy('') }
   }
   const dismiss = async (f: PhotoTrip) => {
     setBusy(f.start_date)
-    try { await api.post(`${V1}/photo-trips/dismiss`, { start_date: f.start_date }); setTrips(ts => (ts || []).filter(x => x.start_date !== f.start_date)) } catch (e) { toast((e as Error).message, 'err') } finally { setBusy('') }
+    try { await api.post(`${V1}/photo-trips/dismiss`, { start_date: f.start_date }); setReview(null); setTrips(ts => (ts || []).filter(x => x.start_date !== f.start_date)) } catch (e) { toast((e as Error).message, 'err') } finally { setBusy('') }
   }
   const saveHome = async (h: { name: string; lat: number; lng: number } | null) => {
     try {
@@ -88,12 +91,14 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
               </div>
               <div className="ft-actions">
                 <button type="button" className="btn ghost sm" disabled={!!busy} onClick={() => dismiss(f)}>Not a trip</button>
+                <button type="button" className="btn sm" disabled={!!busy} onClick={() => setReview(f)}><Icon name="eye" size={14} />Review</button>
                 <button type="button" className="btn primary sm" disabled={!!busy} onClick={() => add(f)}><Icon name="plus" size={14} />Add trip</button>
               </div>
             </div>
           ))}</div>
           {trips.length > SHOW && <button type="button" className="btn ghost sm mt-sm" onClick={() => setAll(v => !v)}>{all ? 'Show fewer' : `Show all ${trips.length}`}</button>}
         </>}
+      {review && <ReviewTrip f={review} busy={!!busy} onClose={() => setReview(null)} onAdd={add} onDismiss={dismiss} />}
       {editHome && (
         <Modal title="Home" onClose={() => setEditHome(false)} size="sm">
           <p className="muted small">Where your trips start and end. Days with photos more than 80 km from here count as away.{home && !home.set && home.name ? ` Detected: ${home.name}, where you took photos on the most days.` : ''}</p>
@@ -102,5 +107,82 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
         </Modal>
       )}
     </Card>
+  )
+}
+
+interface PreviewDay { date: string; photos: number; located: number; away: boolean; km: number; cities: string[]; countries: string[]; lat?: number; lng?: number; sample: Photo[]; all: Photo[] }
+
+/** A found trip, day by day with three days on each side: check it, move its start or end, then add it. */
+function ReviewTrip({ f, onClose, onAdd, onDismiss, busy }: { f: PhotoTrip; onClose: () => void; onAdd: (f: PhotoTrip) => void; onDismiss: (f: PhotoTrip) => void; busy: boolean }) {
+  const [days, setDays] = useState<PreviewDay[] | null>(null)
+  const [home, setHome] = useState<PhotoHome | null>(null)
+  const [err, setErr] = useState('')
+  const [start, setStart] = useState(f.start_date)
+  const [end, setEnd] = useState(f.end_date)
+  const [name, setName] = useState(f.name)
+  const [dest, setDest] = useState(f.destination)
+  const [view, setView] = useState<{ photos: Photo[]; i: number } | null>(null)
+  useEffect(() => {
+    api.get<{ days: PreviewDay[]; home: PhotoHome | null; warning?: string }>(`${V1}/photo-trips/preview?start=${f.start_date}&end=${f.end_date}`)
+      .then(r => { setDays(r.days); setHome(r.home); if (r.warning) setErr(r.warning) }).catch(e => setErr((e as Error).message))
+  }, [f.start_date, f.end_date])
+  const inside = (d: string) => d >= start && d <= end
+  const chosen = (days || []).filter(d => inside(d.date))
+  const nDays = chosen.length, nPhotos = chosen.reduce((a, d) => a + d.photos, 0)
+  // the chosen days' spots, joined in order: roughly the way the trip went
+  const route = (days || []).filter(d => inside(d.date) && d.lat != null).map(d => [d.lat!, d.lng!] as [number, number])
+  const markers = [
+    ...(days || []).filter(d => d.lat != null && (inside(d.date) || d.away)).map((d, i) => ({ id: d.date, lat: d.lat!, lng: d.lng!, label: `${fmtDate(d.date, false)} · ${d.cities[0] || ''}`, number: inside(d.date) ? daysBetween(start, d.date) + 1 : undefined, icon: inside(d.date) ? undefined : '·', kind: `d${i}` })),
+    ...(home ? [{ id: 'home', lat: home.lat, lng: home.lng, label: `Home${home.name ? ' · ' + home.name : ''}`, icon: '🏠' }] : []),
+  ]
+  const bad = start > end
+  return (
+    <Modal title={<>Review: {f.name}</>} onClose={onClose} size="xl"
+      footer={<>
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => onDismiss(f)}>Not a trip</button>
+        <span className="spacer" />
+        <span className="muted small">{bad ? 'The start is after the end' : `${fmtRange(start, end)} · ${plural(nDays, 'day')} · ${plural(nPhotos, 'photo')}`}</span>
+        <button type="button" className="btn primary" disabled={busy || bad || !name.trim()} onClick={() => onAdd({ ...f, name: name.trim(), destination: dest.trim(), start_date: start, end_date: end })}><Icon name="plus" size={15} />Add trip</button>
+      </>}>
+      <div className="grid" style={{ gap: 14 }}>
+        <div className="two-col tight">
+          <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} maxLength={120} /></Field>
+          <Field label="Destination"><input value={dest} onChange={e => setDest(e.target.value)} /></Field>
+        </div>
+        <div className="row wrap" style={{ gap: 12 }}>
+          <Field label="Starts"><input type="date" value={start} onChange={e => setStart(e.target.value)} /></Field>
+          <Field label="Ends"><input type="date" value={end} onChange={e => setEnd(e.target.value)} /></Field>
+          {(start !== f.start_date || end !== f.end_date) && <button type="button" className="link-btn small" style={{ alignSelf: 'end', marginBottom: 10 }} onClick={() => { setStart(f.start_date); setEnd(f.end_date) }}>Back to {fmtRange(f.start_date, f.end_date)}</button>}
+        </div>
+        {err && <div className="callout warn"><Icon name="alert" size={15} /><span>{err}</span></div>}
+        {!days ? (!err && <Loading />) : <>
+          {markers.length > 0 && <MapView className="sm" markers={markers} lines={route.length > 1 ? [{ points: route, color: '#0284c7', dashed: true }] : []} cluster={false} fitKey={`${start}:${end}`} />}
+          <p className="muted small">Three days on each side are shown, so a trip found a day off can be moved: use <b>Start here</b> / <b>End here</b>, or the dates above. A day counts as away when most of its photos are more than 80 km from home{home?.name ? ` (${home.name})` : ''}.</p>
+          <div className="review-days">
+            {days.map(d => {
+              const inTrip = inside(d.date)
+              return (
+                <div key={d.date} className={`review-day ${inTrip ? 'in' : 'out'}`}>
+                  <div className="rd-date">
+                    <b>{weekday(d.date, true)}</b> {fmtDate(d.date, false)}
+                    <span className={`rd-pill ${d.photos === 0 ? 'none' : d.away ? 'away' : 'home'}`}>{d.photos === 0 ? 'no photos' : d.away ? `away · ${d.km.toLocaleString()} km` : d.located === 0 ? 'no location' : 'home'}</span>
+                  </div>
+                  <div className="rd-where">
+                    {d.photos > 0 ? <>{d.cities.join(', ') || <span className="muted">—</span>}<span className="muted"> · {plural(d.photos, 'photo')}{d.located < d.photos ? ` (${d.located} located)` : ''}</span></> : <span className="muted">Nothing taken this day</span>}
+                  </div>
+                  <div className="rd-thumbs">{d.sample.map((p, i) => <button key={photoKey(p)} type="button" onClick={() => setView({ photos: d.all, i: d.all.findIndex(x => photoKey(x) === photoKey(p)) })}><img src={photoThumb(p)} alt="" loading="lazy" /></button>)}{d.photos > d.sample.length && <button type="button" className="rd-more" onClick={() => setView({ photos: d.all, i: 0 })}>+{d.photos - d.sample.length}</button>}</div>
+                  <div className="rd-actions">
+                    {d.date !== start && d.date <= end && <button type="button" className="btn ghost sm" onClick={() => setStart(d.date)}>Start here</button>}
+                    {d.date !== end && d.date >= start && <button type="button" className="btn ghost sm" onClick={() => setEnd(d.date)}>End here</button>}
+                    {inTrip && (d.date === start || d.date === end) && <span className="muted small">{d.date === start && d.date === end ? 'only day' : d.date === start ? 'first day' : 'last day'}</span>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>}
+      </div>
+      {view && <Gallery overModal photos={view.photos} index={Math.max(0, view.i)} onIndex={i => setView(v => v && { ...v, i })} onClose={() => setView(null)} />}
+    </Modal>
   )
 }
