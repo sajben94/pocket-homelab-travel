@@ -224,6 +224,25 @@ func TestPhotoPrismPhotosHiddenAndFoundTrips(t *testing.T) {
 		t.Fatalf("back home: %+v", d)
 	}
 
+	// split: the Rome trip is really two (1–2 May and 4 May); then joined back
+	if c, b := h.do(tok, "POST", "/api/v1/photo-trips/split", map[string]any{"date": "2025-05-03"}); c != 200 {
+		t.Fatalf("split %d %s", c, b)
+	}
+	var sp struct{ Trips []PhotoTrip }
+	_, b = h.do(tok, "GET", "/api/v1/photo-trips", nil)
+	_ = json.Unmarshal(b, &sp)
+	if len(sp.Trips) != 2 || sp.Trips[0].Start != "2025-05-04" || !sp.Trips[0].SplitBefore || sp.Trips[0].Photos != 8 ||
+		sp.Trips[1].Start != "2025-05-01" || sp.Trips[1].End != "2025-05-02" || sp.Trips[1].Photos != 16 || sp.Trips[1].SplitBefore || sp.Trips[0].DayInfo != nil {
+		t.Fatalf("after split: %s", b)
+	}
+	h.do(tok, "POST", "/api/v1/photo-trips/join", map[string]any{"date": "2025-05-04"})
+	_, b = h.do(tok, "GET", "/api/v1/photo-trips", nil)
+	sp.Trips = nil
+	_ = json.Unmarshal(b, &sp)
+	if len(sp.Trips) != 1 || sp.Trips[0].Start != "2025-05-01" || sp.Trips[0].End != "2025-05-04" {
+		t.Fatalf("after join: %s", b)
+	}
+
 	// dismissed: gone, from the cache too
 	h.do(tok, "POST", "/api/v1/photo-trips/dismiss", map[string]any{"start_date": "2025-05-01"})
 	_, b = h.do(tok, "GET", "/api/v1/photo-trips", nil)
@@ -283,6 +302,12 @@ func TestFindPhotoTripsMultiCityAndSetHome(t *testing.T) {
 	f := trips[0]
 	if f.Start != "2025-06-21" || f.End != "2025-06-26" || f.Days != 6 || f.Name != "Belgrade & Novi Sad 2025" || len(f.Countries) != 1 || f.Countries[0] != "RS" {
 		t.Fatalf("trip %+v", f)
+	}
+	// split where Novi Sad starts: two trips, each named after its own stop
+	parts := splitPhotoTrips(trips, map[string]bool{"2025-06-24": true})
+	if len(parts) != 2 || parts[0].Name != "Novi Sad 2025" || !parts[0].SplitBefore || parts[0].Start != "2025-06-26" ||
+		parts[1].Name != "Belgrade 2025" || parts[1].End != "2025-06-22" || parts[1].Days != 2 {
+		t.Fatalf("split parts: %+v", parts)
 	}
 	// Home set to Belgrade: Nitra days are now the trips
 	trips, home = findPhotoTrips(pts, &[2]float64{44.7866, 20.4489})

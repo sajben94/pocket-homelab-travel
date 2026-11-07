@@ -304,6 +304,166 @@ type PhotoTrip struct {
 	Lng       float64    `json:"lng"`
 	Km        int        `json:"km_from_home"`
 	Cover     *tripPhoto `json:"cover,omitempty"`
+	// SplitBefore: this trip starts where the person split a longer one
+	// (it can be joined back).
+	SplitBefore bool `json:"split_before,omitempty"`
+	// DayInfo summarizes each day away, so a trip can be split without
+	// looking through the library again.
+	DayInfo []tripDay `json:"day_info,omitempty"`
+}
+
+// tripDay is one day away from home in a found trip.
+type tripDay struct {
+	Date      string         `json:"date"`
+	Photos    int            `json:"photos"`
+	SumLat    float64        `json:"sum_lat"`
+	SumLng    float64        `json:"sum_lng"`
+	MaxKm     float64        `json:"max_km"`
+	Cities    map[string]int `json:"cities,omitempty"`
+	Countries map[string]int `json:"countries,omitempty"`
+	Order     []string       `json:"order,omitempty"` // countries in the order they appear
+	Cover     tripPhoto      `json:"cover"`
+	Fav       bool           `json:"fav,omitempty"` // the cover is a favourite
+}
+
+func summarizeDay(date string, far []geoPhoto, hl, hg float64) tripDay {
+	d := tripDay{Date: date, Photos: len(far), Cities: map[string]int{}, Countries: map[string]int{}}
+	for _, p := range far {
+		d.SumLat += p.lat
+		d.SumLng += p.lng
+		d.MaxKm = math.Max(d.MaxKm, distKm(hl, hg, p.lat, p.lng))
+		if p.city != "" {
+			d.Cities[p.city]++
+		}
+		if p.country != "" {
+			if d.Countries[p.country] == 0 {
+				d.Order = append(d.Order, p.country)
+			}
+			d.Countries[p.country]++
+		}
+		if !d.Fav && p.photo.Favorite && p.photo.Type == "IMAGE" {
+			d.Cover, d.Fav = p.photo, true
+		}
+	}
+	if !d.Fav && len(far) > 0 {
+		d.Cover = far[len(far)/2].photo
+	}
+	return d
+}
+
+func dayGap(a, b string) int {
+	ta, _ := time.Parse("2006-01-02", a)
+	tb, _ := time.Parse("2006-01-02", b)
+	return int(tb.Sub(ta).Hours()/24) - 1
+}
+
+// buildPhotoTrip names and measures a found trip from its days away
+// (oldest first): the main stop (and a second one with 15 %+ of the
+// photos), the countries with 5 %+ of them, a cover.
+func buildPhotoTrip(ds []tripDay) PhotoTrip {
+	f := PhotoTrip{Start: ds[0].Date, End: ds[len(ds)-1].Date, Days: dayGap(ds[0].Date, ds[len(ds)-1].Date) + 2, DayInfo: ds}
+	cities, ctry := map[string]int{}, map[string]int{}
+	var order []string
+	var sl, sg, maxKm float64
+	for _, d := range ds {
+		f.Photos += d.Photos
+		sl += d.SumLat
+		sg += d.SumLng
+		maxKm = math.Max(maxKm, d.MaxKm)
+		for c, n := range d.Cities {
+			cities[c] += n
+		}
+		for _, c := range d.Order {
+			if ctry[c] == 0 {
+				order = append(order, c)
+			}
+			ctry[c] += d.Countries[c]
+		}
+	}
+	if f.Photos > 0 {
+		f.Lat, f.Lng = sl/float64(f.Photos), sg/float64(f.Photos)
+	}
+	f.Km = int(maxKm)
+	for _, c := range order {
+		if ctry[c]*20 >= f.Photos { // a stray border shot is not a country visited
+			f.Countries = append(f.Countries, c)
+		}
+	}
+	city := topKey(cities)
+	second := ""
+	for c, k := range cities {
+		if c != city && k*100 >= f.Photos*15 && (second == "" || k > cities[second] || k == cities[second] && c < second) {
+			second = c
+		}
+	}
+	country := ""
+	if c := countries.Get(topKey(ctry)); c != nil {
+		country = c.Name
+	}
+	f.Place = strings.Trim(city+", "+country, ", ")
+	switch {
+	case city != "" && second != "":
+		f.Name = city + " & " + second
+	case city != "" && len(f.Countries) > 1:
+		f.Name = city + " & more"
+	case city != "":
+		f.Name = city
+	case country != "":
+		f.Name = country
+	default:
+		f.Name = "Trip"
+	}
+	f.Name += " " + ds[0].Date[:4]
+	// cover: a favourite, else the middle day's
+	cover := ds[len(ds)/2].Cover
+	for _, d := range ds {
+		if d.Fav {
+			cover = d.Cover
+			break
+		}
+	}
+	f.Cover = &cover
+	return f
+}
+
+// splitPhotoTrips cuts found trips where the person said a new trip starts
+// (a date inside a trip: that day and the ones after are the next trip).
+func splitPhotoTrips(found []PhotoTrip, splits map[string]bool) []PhotoTrip {
+	if len(splits) == 0 {
+		return found
+	}
+	var out []PhotoTrip
+	for _, f := range found {
+		if len(f.DayInfo) < 2 {
+			out = append(out, f)
+			continue
+		}
+		var part []tripDay
+		var parts [][]tripDay
+		for i, d := range f.DayInfo {
+			cut := false
+			if i > 0 {
+				for sd := range splits {
+					if sd > f.DayInfo[i-1].Date && sd <= d.Date {
+						cut = true
+					}
+				}
+			}
+			if cut && len(part) > 0 {
+				parts = append(parts, part)
+				part = nil
+			}
+			part = append(part, d)
+		}
+		parts = append(parts, part)
+		for i, p := range parts {
+			t := buildPhotoTrip(p)
+			t.SplitBefore = i > 0
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Start > out[j].Start })
+	return out
 }
 
 // PhotoHome is where trips start and end: set in Settings, else where the
@@ -393,9 +553,11 @@ func (s *Server) handlePhotoTrips(w http.ResponseWriter, r *http.Request) {
 					// change without a rescan)
 					trips, _ := s.store.ListTrips(ctx, store.TripFilter{UserID: u.ID})
 					dismissed, _ := s.store.DismissedPhotoTrips(ctx, u.ID)
+					splits, _ := s.store.PhotoTripSplits(ctx, u.ID)
 					out := []PhotoTrip{}
-					for _, f := range c.Trips {
+					for _, f := range splitPhotoTrips(c.Trips, splits) {
 						if !dismissed[f.Start] && !coveredByTrip(f, trips) {
+							f.DayInfo = nil // only needed to split
 							out = append(out, f)
 						}
 					}
@@ -614,11 +776,7 @@ func findPhotoTrips(pts []geoPhoto, set *[2]float64) ([]PhotoTrip, PhotoHome) {
 			away[d] = far
 		}
 	}
-	gap := func(a, b string) int {
-		ta, _ := time.Parse("2006-01-02", a)
-		tb, _ := time.Parse("2006-01-02", b)
-		return int(tb.Sub(ta).Hours()/24) - 1
-	}
+	gap := dayGap
 	var runs [][]string
 	var cur []string
 	for _, d := range days {
@@ -644,72 +802,14 @@ func findPhotoTrips(pts []geoPhoto, set *[2]float64) ([]PhotoTrip, PhotoHome) {
 
 	out := []PhotoTrip{}
 	for _, run := range runs {
-		var all []geoPhoto
+		var ds []tripDay
 		for _, d := range run {
-			all = append(all, away[d]...)
+			ds = append(ds, summarizeDay(d, away[d], hl, hg))
 		}
-		f := PhotoTrip{Start: run[0], End: run[len(run)-1], Days: gap(run[0], run[len(run)-1]) + 2, Photos: len(all)}
-		cities, ctry := map[string]int{}, map[string]int{}
-		var order []string
-		var sl, sg, maxKm float64
-		for _, p := range all {
-			sl += p.lat
-			sg += p.lng
-			maxKm = math.Max(maxKm, distKm(hl, hg, p.lat, p.lng))
-			if p.city != "" {
-				cities[p.city]++
-			}
-			if p.country != "" {
-				if ctry[p.country] == 0 {
-					order = append(order, p.country)
-				}
-				ctry[p.country]++
-			}
-		}
-		if f.Days == 1 && maxKm < 300 {
+		f := buildPhotoTrip(ds)
+		if f.Days == 1 && f.Km < 300 {
 			continue
 		}
-		f.Lat, f.Lng, f.Km = sl/float64(len(all)), sg/float64(len(all)), int(maxKm)
-		for _, c := range order {
-			if ctry[c]*20 >= len(all) { // 5 %+ of the photos: a stray border shot is not a country visited
-				f.Countries = append(f.Countries, c)
-			}
-		}
-		city := topKey(cities)
-		// a second stop with a good share of the photos names the trip too
-		second := ""
-		for c, k := range cities {
-			if c != city && k*100 >= len(all)*15 && (second == "" || k > cities[second] || k == cities[second] && c < second) {
-				second = c
-			}
-		}
-		country := ""
-		if c := countries.Get(topKey(ctry)); c != nil {
-			country = c.Name
-		}
-		f.Place = strings.Trim(city+", "+country, ", ")
-		switch {
-		case city != "" && second != "":
-			f.Name = city + " & " + second
-		case city != "" && len(f.Countries) > 1:
-			f.Name = city + " & more"
-		case city != "":
-			f.Name = city
-		case country != "":
-			f.Name = country
-		default:
-			f.Name = "Trip"
-		}
-		f.Name += " " + run[0][:4]
-		// cover: a favourite, else a photo from the middle of the trip
-		cover := all[len(all)/2].photo
-		for _, p := range all {
-			if p.photo.Favorite && p.photo.Type == "IMAGE" {
-				cover = p.photo
-				break
-			}
-		}
-		f.Cover = &cover
 		out = append(out, f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start > out[j].Start })
@@ -1000,4 +1100,49 @@ func topKeys(m map[string]int, n int) []string {
 		keys = keys[:n]
 	}
 	return keys
+}
+
+// handleSplitPhotoTrip: a found trip is two (or more): the one before ends
+// before this date and the next starts with it. {"date": "2025-07-20"}
+func (s *Server) handleSplitPhotoTrip(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Date string `json:"date"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if _, err := time.Parse("2006-01-02", in.Date); err != nil {
+		writeErr(w, http.StatusBadRequest, "date is required")
+		return
+	}
+	if err := s.store.AddPhotoTripSplit(r.Context(), userFrom(r.Context()).ID, in.Date); err != nil {
+		s.fail(w, err, "split")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleJoinPhotoTrip undoes a split: the trip starting at date joins the
+// one before it. {"date": "<that trip's start>"}
+func (s *Server) handleJoinPhotoTrip(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Date string `json:"date"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	d, err := time.Parse("2006-01-02", in.Date)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "date is required")
+		return
+	}
+	// the split may sit on a day without photos just before the part's start
+	from := d.AddDate(0, 0, -(maxGapDays + 1)).Format("2006-01-02")
+	if err := s.store.RemovePhotoTripSplits(r.Context(), userFrom(r.Context()).ID, from, in.Date); err != nil {
+		s.fail(w, err, "join")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -88,7 +88,7 @@ export interface Photo { id: string; src: 'immich' | 'photoprism'; hash?: string
 /** Where found trips start and end: set by hand, or where most photo days are. */
 export interface PhotoHome { name: string; lat: number; lng: number; set: boolean; days: number }
 /** A stretch of days away from home found in the photos, not covered by a trip yet. */
-export interface PhotoTrip { start_date: string; end_date: string; days: number; photos: number; name: string; destination: string; countries: string[] | null; lat: number; lng: number; km_from_home: number; cover?: Photo }
+export interface PhotoTrip { start_date: string; end_date: string; days: number; photos: number; name: string; destination: string; countries: string[] | null; lat: number; lng: number; km_from_home: number; cover?: Photo; split_before?: boolean }
 export interface GeoResult { name: string; display: string; lat: number; lng: number; type: string; category: string; country: string; city: string; website?: string; phone?: string; hours?: string; source: string; osm_id?: string; suggest?: string }
 export type ConnMode = 'core' | 'direct' | 'off'
 /** Where the recorded route comes from: Pocket Movement (through Pocket Core only) or Dawarich. */

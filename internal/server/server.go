@@ -370,6 +370,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/photo-trips", s.handlePhotoTrips)
 			r.Post("/photo-trips/dismiss", s.handleDismissPhotoTrip)
 			r.Get("/photo-trips/preview", s.handlePhotoTripPreview)
+			r.Post("/photo-trips/split", s.handleSplitPhotoTrip)
+			r.Post("/photo-trips/join", s.handleJoinPhotoTrip)
 			r.Get("/photos/{id}/thumb", s.handlePhotoThumb)
 			r.Get("/trips", s.handleListTrips)
 			r.Post("/trips", s.handleCreateTrip)

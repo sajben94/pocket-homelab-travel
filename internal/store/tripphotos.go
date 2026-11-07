@@ -62,3 +62,34 @@ func (s *Store) DismissPhotoTrip(ctx context.Context, userID int64, start string
 	_, err := s.DB.ExecContext(ctx, `INSERT OR IGNORE INTO photo_trip_dismissed (user_id, start_date) VALUES (?, ?)`, userID, start)
 	return err
 }
+
+// PhotoTripSplits are the dates where userID said a new trip starts inside
+// one found in their photos.
+func (s *Store) PhotoTripSplits(ctx context.Context, userID int64) (map[string]bool, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT date FROM photo_trip_splits WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out[d] = true
+	}
+	return out, rows.Err()
+}
+
+// AddPhotoTripSplit remembers that a new trip starts on date.
+func (s *Store) AddPhotoTripSplit(ctx context.Context, userID int64, date string) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT OR IGNORE INTO photo_trip_splits (user_id, date) VALUES (?, ?)`, userID, date)
+	return err
+}
+
+// RemovePhotoTripSplits forgets the splits on from..to (inclusive).
+func (s *Store) RemovePhotoTripSplits(ctx context.Context, userID int64, from, to string) error {
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM photo_trip_splits WHERE user_id = ? AND date >= ? AND date <= ?`, userID, from, to)
+	return err
+}

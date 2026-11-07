@@ -67,6 +67,15 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
       setSettings(s); setEditHome(false); setTrips(null); await load()
     } catch (e) { toast((e as Error).message, 'err') }
   }
+  // a found trip that is really two: a new one starts on date
+  const split = async (date: string) => {
+    setBusy(date)
+    try { await api.post(`${V1}/photo-trips/split`, { date }); setReview(null); toast('Split in two: review or add each one'); await load() } catch (e) { toast((e as Error).message, 'err') } finally { setBusy('') }
+  }
+  const join = async (f: PhotoTrip) => {
+    setBusy(f.start_date)
+    try { await api.post(`${V1}/photo-trips/join`, { date: f.start_date }); toast('Joined back into one'); await load() } catch (e) { toast((e as Error).message, 'err') } finally { setBusy('') }
+  }
   const shown = all ? trips || [] : (trips || []).slice(0, SHOW)
   return (
     <Card className="found-card mb-sm" title={<><Icon name="camera" size={16} />Found in your photos{trips && trips.length > 0 && <span className="muted small"> · {trips.length}</span>}</>}
@@ -87,7 +96,7 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
               {f.cover ? <img src={photoThumb(f.cover)} alt="" loading="lazy" /> : <span className="ft-noimg"><Icon name="camera" size={20} /></span>}
               <div style={{ minWidth: 0 }}>
                 <div className="ft-name">{f.name} {(f.countries || []).map(c => <span key={c} title={countryName(c)}>{flag(c)}</span>)}</div>
-                <div className="ft-meta">{fmtRange(f.start_date, f.end_date)} · {plural(f.days, 'day')} · {plural(f.photos, 'photo')}{f.km_from_home > 0 && ` · ${f.km_from_home.toLocaleString()} km from home`}</div>
+                <div className="ft-meta">{f.split_before && <><button type="button" className="link-btn" disabled={!!busy} onClick={() => join(f)} title="It was split from the trip before it: make it one again">Join with the trip before</button> · </>}{fmtRange(f.start_date, f.end_date)} · {plural(f.days, 'day')} · {plural(f.photos, 'photo')}{f.km_from_home > 0 && ` · ${f.km_from_home.toLocaleString()} km from home`}</div>
               </div>
               <div className="ft-actions">
                 <button type="button" className="btn ghost sm" disabled={!!busy} onClick={() => dismiss(f)}>Not a trip</button>
@@ -98,7 +107,7 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
           ))}</div>
           {trips.length > SHOW && <button type="button" className="btn ghost sm mt-sm" onClick={() => setAll(v => !v)}>{all ? 'Show fewer' : `Show all ${trips.length}`}</button>}
         </>}
-      {review && <ReviewTrip f={review} busy={!!busy} onClose={() => setReview(null)} onAdd={add} onDismiss={dismiss} />}
+      {review && <ReviewTrip f={review} busy={!!busy} onClose={() => setReview(null)} onAdd={add} onDismiss={dismiss} onSplit={split} />}
       {editHome && (
         <Modal title="Home" onClose={() => setEditHome(false)} size="sm">
           <p className="muted small">Where your trips start and end. Days with photos more than 80 km from here count as away.{home && !home.set && home.name ? ` Detected: ${home.name}, where you took photos on the most days.` : ''}</p>
@@ -113,7 +122,7 @@ export function FoundTrips({ onAdded }: { onAdded: () => void }) {
 interface PreviewDay { date: string; photos: number; located: number; away: boolean; km: number; cities: string[]; countries: string[]; lat?: number; lng?: number; sample: Photo[]; all: Photo[] }
 
 /** A found trip, day by day with three days on each side: check it, move its start or end, then add it. */
-function ReviewTrip({ f, onClose, onAdd, onDismiss, busy }: { f: PhotoTrip; onClose: () => void; onAdd: (f: PhotoTrip) => void; onDismiss: (f: PhotoTrip) => void; busy: boolean }) {
+function ReviewTrip({ f, onClose, onAdd, onDismiss, onSplit, busy }: { f: PhotoTrip; onClose: () => void; onAdd: (f: PhotoTrip) => void; onDismiss: (f: PhotoTrip) => void; onSplit: (date: string) => void; busy: boolean }) {
   const [days, setDays] = useState<PreviewDay[] | null>(null)
   const [home, setHome] = useState<PhotoHome | null>(null)
   const [err, setErr] = useState('')
@@ -157,7 +166,7 @@ function ReviewTrip({ f, onClose, onAdd, onDismiss, busy }: { f: PhotoTrip; onCl
         {err && <div className="callout warn"><Icon name="alert" size={15} /><span>{err}</span></div>}
         {!days ? (!err && <Loading />) : <>
           {markers.length > 0 && <MapView className="sm" markers={markers} lines={route.length > 1 ? [{ points: route, color: '#0284c7', dashed: true }] : []} cluster={false} fitKey={`${start}:${end}`} />}
-          <p className="muted small">Three days on each side are shown, so a trip found a day off can be moved: use <b>Start here</b> / <b>End here</b>, or the dates above. A day counts as away when most of its photos are more than 80 km from home{home?.name ? ` (${home.name})` : ''}.</p>
+          <p className="muted small">Three days on each side are shown, so a trip found a day off can be moved: use <b>Start here</b> / <b>End here</b>, or the dates above. Two trips run together? <b>Split here</b> on the day the second one starts. A day counts as away when most of its photos are more than 80 km from home{home?.name ? ` (${home.name})` : ''}.</p>
           <div className="review-days">
             {days.map(d => {
               const inTrip = inside(d.date)
@@ -174,6 +183,7 @@ function ReviewTrip({ f, onClose, onAdd, onDismiss, busy }: { f: PhotoTrip; onCl
                   <div className="rd-actions">
                     {d.date !== start && d.date <= end && <button type="button" className="btn ghost sm" onClick={() => setStart(d.date)}>Start here</button>}
                     {d.date !== end && d.date >= start && <button type="button" className="btn ghost sm" onClick={() => setEnd(d.date)}>End here</button>}
+                    {d.date > f.start_date && d.date <= f.end_date && <button type="button" className="btn ghost sm" disabled={busy} title="Two trips: a new one starts this day" onClick={() => onSplit(d.date)}><Icon name="scissors" size={14} />Split here</button>}
                     {inTrip && (d.date === start || d.date === end) && <span className="muted small">{d.date === start && d.date === end ? 'only day' : d.date === start ? 'first day' : 'last day'}</span>}
                   </div>
                 </div>
